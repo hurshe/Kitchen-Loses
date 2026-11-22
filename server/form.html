@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#12151c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Straty — zgłoszenie</title>
+<link rel="icon" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<script>
+/* Манифест — свой на кухню: токен едет в start_url, иначе иконка на экране
+   планшета открывала бы «Brak dostępu». Ставим ссылку до загрузки страницы,
+   чтобы Chrome сразу увидел, что форму можно установить. */
+(function () {
+  var t = new URLSearchParams(location.search).get('t');
+  try { t = t || localStorage.getItem('kuchnia_form_token'); } catch (e) {}
+  if (!t) return;
+  var l = document.createElement('link');
+  l.rel = 'manifest';
+  l.href = '/manifest.webmanifest?t=' + encodeURIComponent(t);
+  document.head.appendChild(l);
+})();
+</script>
+<style>
+/* Форма повара. Одна задача: вписать страту и отправить.
+   Ни отчётов, ни настроек — всё это в приложении менеджера.
+   Крупные цели (48px+), шрифт полей 16px+ (иначе телефон зумит страницу). */
+:root{
+  --bg:#12151c; --bg2:#191d27; --bg3:#222836; --line:#2c3444;
+  --fg:#eef2f8; --muted:#8e9ab0; --accent:#D9952E; --accent-2:#f0ad45;
+  --ok:#34d399; --warn:#fbbf24; --danger:#f87171; --radius:14px; --bar:76px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
+  font:16px/1.4 -apple-system,"Segoe UI",Roboto,system-ui,sans-serif;
+  overscroll-behavior-y:none}
+body{padding-bottom:calc(var(--bar) + env(safe-area-inset-bottom))}
+.hidden{display:none !important}
+.muted{color:var(--muted)} .small{font-size:13px}
+.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;
+  justify-content:space-between;gap:10px;background:var(--bg2);
+  border-bottom:1px solid var(--line);
+  padding:calc(10px + env(safe-area-inset-top)) 14px 10px}
+.kitchen{font-weight:700;font-size:17px}
+.subline{color:var(--muted);font-size:13px}
+.net{width:11px;height:11px;border-radius:50%;background:var(--ok);
+  box-shadow:0 0 0 3px rgba(52,211,153,.15)}
+.net.off{background:var(--warn);box-shadow:0 0 0 3px rgba(251,191,36,.15)}
+.top-right{display:flex;align-items:center;gap:12px}
+.btn.install{min-height:40px;padding:8px 14px;font-size:15px;color:var(--accent);
+  border-color:var(--accent);background:transparent}
+main{padding:12px 14px 20px}
+.fld{display:block;margin:0 0 12px;color:var(--muted);font-size:13px}
+.fld input,.fld select{display:block;width:100%;height:50px;margin-top:5px;
+  padding:0 12px;font-size:17px;color:var(--fg);background:var(--bg2);
+  border:1px solid var(--line);border-radius:var(--radius)}
+.fld input:focus{outline:none;border-color:var(--accent)}
+.searchbar{position:relative;margin:6px 0 10px}
+.searchbar input{width:100%;height:50px;padding:0 44px 0 14px;font-size:17px;
+  color:var(--fg);background:var(--bg2);border:1px solid var(--line);
+  border-radius:var(--radius)}
+.searchbar input:focus{outline:none;border-color:var(--accent)}
+#clear{position:absolute;right:4px;top:3px}
+.icon-btn{min-width:44px;height:44px;border:0;background:transparent;
+  color:var(--muted);font-size:20px;border-radius:10px}
+.icon-btn:active{background:var(--bg3)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 12px}
+.chips.scroll{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+.chips.scroll::-webkit-scrollbar{display:none}
+.chip{flex:0 0 auto;min-height:40px;padding:9px 14px;background:var(--bg2);
+  color:var(--fg);border:1px solid var(--line);border-radius:999px;
+  font-size:15px;white-space:nowrap}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#1b1200;
+  font-weight:700}
+.items{display:grid;gap:8px}
+.item{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  width:100%;min-height:58px;padding:12px 14px;background:var(--bg2);
+  color:var(--fg);text-align:left;border:1px solid var(--line);
+  border-radius:var(--radius);font-size:16px}
+.item:active{background:var(--bg3);border-color:var(--accent)}
+.item .grow{flex:1;min-width:0}
+.item .name{display:block;font-weight:600}
+.item .meta{display:block;color:var(--muted);font-size:13px}
+.item .u{color:var(--muted);font-size:14px;flex:0 0 auto}
+.empty{text-align:center;color:var(--muted);padding:36px 10px}
+.lines{display:grid;gap:8px;margin-bottom:14px}
+.line{display:flex;align-items:center;gap:10px;padding:11px 12px;
+  background:var(--bg2);border:1px solid var(--line);border-radius:var(--radius)}
+.line .grow{flex:1;min-width:0}
+.line .t1{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.line .t1,.line .t2{display:block}
+.line .t2{color:var(--muted);font-size:13px}
+.line .qty{font-weight:700;font-size:17px;white-space:nowrap}
+.line .del{min-width:42px;height:42px;border:0;border-radius:10px;
+  background:transparent;color:var(--danger);font-size:18px}
+.sect{color:var(--muted);font-size:13px;margin:4px 2px 8px}
+.btn{display:inline-flex;align-items:center;justify-content:center;
+  min-height:48px;padding:12px 18px;border:1px solid var(--line);
+  border-radius:var(--radius);background:var(--bg2);color:var(--fg);
+  font-size:16px;font-weight:600}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#1b1200}
+.btn.primary:active{background:var(--accent-2)}
+.btn.wide{width:100%}
+.btn:disabled{opacity:.5}
+.bar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;
+  align-items:center;gap:12px;padding:10px 14px
+  calc(10px + env(safe-area-inset-bottom));background:var(--bg2);
+  border-top:1px solid var(--line)}
+.bar .count{flex:1;font-size:14px;color:var(--muted)}
+.bar .btn{min-width:170px}
+.backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:40}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:50;max-height:92vh;
+  overflow-y:auto;background:var(--bg2);border-top:1px solid var(--line);
+  border-radius:20px 20px 0 0;
+  padding:8px 16px calc(20px + env(safe-area-inset-bottom));
+  animation:up .18s ease}
+@keyframes up{from{transform:translateY(20%);opacity:.5}to{transform:none;opacity:1}}
+.grip{width:42px;height:4px;border-radius:2px;background:var(--line);
+  margin:4px auto 10px}
+.sheet-head{display:flex;align-items:flex-start;justify-content:space-between;
+  gap:10px;margin-bottom:12px}
+.sheet-title{font-size:20px;font-weight:700}
+.label{color:var(--muted);font-size:13px;margin:14px 0 6px}
+.qty-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.qty-btn{width:56px;height:56px;flex:0 0 auto;font-size:26px;background:var(--bg3);
+  color:var(--fg);border:1px solid var(--line);border-radius:var(--radius)}
+.qty-btn:active{background:var(--accent);border-color:var(--accent);color:#1b1200}
+.qty-input{flex:1 1 90px;min-width:90px;height:56px;text-align:center;
+  font-size:26px;font-weight:700;color:var(--fg);background:var(--bg3);
+  border:1px solid var(--line);border-radius:var(--radius)}
+.qty-input:focus{outline:none;border-color:var(--accent)}
+.units{display:flex;gap:6px}
+.units .chip{min-width:52px;justify-content:center}
+.more{margin-top:14px}
+.more summary{cursor:pointer;padding:12px 2px;color:var(--muted);font-size:15px;
+  list-style:none}
+.more summary::-webkit-details-marker{display:none}
+.more summary::before{content:"▸ "} .more[open] summary::before{content:"▾ "}
+.done{text-align:center;padding:40px 16px}
+.done .mark{font-size:56px}
+.done h2{margin:12px 0 6px}
+.toast{position:fixed;left:12px;right:12px;
+  bottom:calc(var(--bar) + 12px + env(safe-area-inset-bottom));z-index:60;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:14px 16px;border-radius:var(--radius);background:#1f2a20;
+  border:1px solid rgba(52,211,153,.4);color:#d7f7e6;font-size:15px;
+  box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.toast.bad{background:#2a1f20;border-color:rgba(248,113,113,.45);color:#ffd9d9}
+.toast .undo{border:0;background:transparent;color:inherit;font-weight:700;
+  text-decoration:underline;font-size:15px}
+.wide-only{display:none}
+@media(min-width:620px){main{max-width:640px;margin:0 auto}
+  .items{grid-template-columns:1fr 1fr}
+  .sheet{max-width:620px;margin:0 auto;left:20px;right:20px;bottom:20px;
+    border-radius:20px}}
+/* Планшет: каталог слева, зашлушение справа. Правая колонка прилипает под
+   шапкой и скроллит строки внутри себя — «Wyślij» всегда на виду. */
+@media(min-width:760px){
+  :root{--top:calc(64px + env(safe-area-inset-top))}
+  body{padding-bottom:0}
+  main{max-width:1280px;padding:16px 20px 24px}
+  #v-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,380px);
+    grid-template-areas:"catalog order";gap:20px;align-items:start}
+  .catalog{grid-area:catalog;min-width:0}
+  .searchbar{margin-top:0}
+  .chips.scroll{flex-wrap:wrap;overflow:visible}
+  .items{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+  .order{grid-area:order;position:sticky;top:calc(var(--top) + 16px);
+    display:flex;flex-direction:column;
+    max-height:calc(100vh - var(--top) - 32px);padding:16px;
+    background:var(--bg2);border:1px solid var(--line);border-radius:18px}
+  .order .fld input{background:var(--bg)}
+  #lines-box{flex:1 1 auto;min-height:0;overflow-y:auto;margin:0 -4px;
+    padding:0 4px}
+  #lines-box:not(.hidden)~.wide-only{display:none}
+  .order .line{background:var(--bg)}
+  .wide-only{display:block;flex:1 1 auto;padding:40px 10px}
+  .bar{position:static;flex:0 0 auto;flex-direction:column;align-items:stretch;
+    gap:10px;margin-top:12px;padding:14px 0 0;background:transparent;
+    border-top:1px solid var(--line)}
+  .bar .count{text-align:center}
+  .bar .btn{min-height:56px;font-size:17px}
+  #v-done{max-width:520px;margin:0 auto}
+  .toast{left:20px;right:auto;bottom:20px;max-width:min(560px,calc(100vw - 440px))}
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div>
+    <div class="kitchen" id="kitchen">Straty</div>
+    <div class="subline" id="today">—</div>
+  </div>
+  <div class="top-right">
+    <button class="btn install hidden" id="install">⤓ Zainstaluj</button>
+    <span class="net" id="net" title="Połączenie"></span>
+  </div>
+</header>
+
+<main>
+  <!-- ── экран ввода ── -->
+  <!-- На телефоне колонки идут одна под другой, на планшете — каталог слева,
+       зашлушение справа. Порядок в разметке — телефонный. -->
+  <section id="v-main">
+   <aside class="order">
+    <label class="fld">Kto zgłasza
+      <input id="person" type="text" maxlength="40" placeholder="Imię"
+             autocomplete="off" enterkeyhint="done"></label>
+
+    <div id="lines-box" class="hidden">
+      <div class="sect">W zgłoszeniu</div>
+      <div class="lines" id="lines"></div>
+    </div>
+    <p id="lines-empty" class="empty wide-only">Dotknij pozycji z listy,<br>
+      żeby dodać ją do zgłoszenia.</p>
+
+    <!-- на телефоне прибита к низу экрана, на планшете — низ правой колонки -->
+    <div class="bar" id="bar">
+      <span class="count" id="count">Nic jeszcze nie dodano</span>
+      <button class="btn primary" id="send" disabled>Wyślij</button>
+    </div>
+   </aside>
+
+   <div class="catalog">
+    <div class="searchbar">
+      <input id="search" type="search" inputmode="search" autocomplete="off"
+             placeholder="Szukaj pozycji…" aria-label="Szukaj pozycji">
+      <button id="clear" class="icon-btn" aria-label="Wyczyść">✕</button>
+    </div>
+    <div id="cats" class="chips scroll"></div>
+    <div id="items" class="items"></div>
+    <p id="no-items" class="empty hidden">Nic nie znaleziono.</p>
+    <p id="no-catalog" class="empty hidden">Katalog jest pusty.<br>
+      <span class="small">Menedżer musi wysłać pozycje z aplikacji.</span></p>
+   </div>
+  </section>
+
+  <!-- ── экран «отправлено» ── -->
+  <section id="v-done" class="done hidden">
+    <div class="mark">✅</div>
+    <h2 id="done-title">Wysłane</h2>
+    <p class="muted" id="done-text">Menedżer zatwierdzi zgłoszenie w aplikacji.</p>
+    <button class="btn primary wide" id="again" style="margin-top:20px">
+      Nowe zgłoszenie</button>
+  </section>
+</main>
+
+<!-- ── панель ввода количества ── -->
+<div class="backdrop hidden" id="backdrop"></div>
+<div class="sheet hidden" id="sheet">
+  <div class="grip"></div>
+  <div class="sheet-head">
+    <div><div class="sheet-title" id="s-name">—</div>
+      <div class="muted small" id="s-cat"></div></div>
+    <button class="icon-btn" id="s-close" aria-label="Zamknij">✕</button>
+  </div>
+  <div class="qty-row">
+    <button class="qty-btn" id="s-minus" aria-label="Mniej">−</button>
+    <input id="s-qty" type="text" inputmode="decimal" class="qty-input" value="1">
+    <button class="qty-btn" id="s-plus" aria-label="Więcej">+</button>
+    <div class="units" id="s-units"></div>
+  </div>
+  <div class="chips" id="s-quick"></div>
+  <div class="label">Powód</div>
+  <div class="chips" id="s-reasons"></div>
+  <details class="more">
+    <summary>Uwagi</summary>
+    <label class="fld"><input type="text" id="s-note" maxlength="200"
+      placeholder="np. rozmroziło się w nocy"></label>
+  </details>
+  <button class="btn primary wide" id="s-add" style="margin-top:14px;min-height:56px">
+    Dodaj do zgłoszenia</button>
+</div>
+
+<div id="toast" class="toast hidden"><span id="toast-text"></span>
+  <button id="toast-undo" class="undo hidden">Cofnij</button></div>
+
+<script>
+'use strict';
+/* Форма повара.
+   1) Позиции копятся в «зашлушение» и уезжают одной отправкой — менеджер
+      подтверждает его целиком, как беччки в Beer Count.
+   2) Если сети нет, зашлушение ложится в очередь в localStorage и уходит
+      само, когда связь вернётся. id генерирует телефон, сервер пишет через
+      INSERT OR IGNORE — повторная отправка не создаёт дубль.
+   3) Никаких отчётов и настроек: всё это живёт в приложении менеджера. */
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+const TOKEN = new URLSearchParams(location.search).get('t')
+  || localStorage.getItem('kuchnia_form_token') || '';
+if (TOKEN) localStorage.setItem('kuchnia_form_token', TOKEN);
+
+const CAT_KEY = 'kuchnia_form_catalog';
+const QUEUE_KEY = 'kuchnia_form_queue';
+const PERSON_KEY = 'kuchnia_form_person';
+
+const S = { items: [], reasons: [], cats: [], cat: '', search: '',
+            today: new Date().toISOString().slice(0, 10),
+            lines: [], sheetItem: null, unit: null, reason: '' };
+
+const QUICK = { szt: [1, 2, 3, 5, 10], kg: [0.1, 0.25, 0.5, 1, 2],
+                g: [50, 100, 200, 500], l: [0.1, 0.25, 0.5, 1, 2],
+                ml: [50, 100, 250, 500] };
+const STEP = { szt: 1, kg: 0.5, g: 50, l: 0.5, ml: 50 };
+
+const uid = () => (Date.now().toString(36) + Math.random().toString(36).slice(2, 8)).slice(0, 20);
+const norm = s => (s || '').toLowerCase().replace(/ł/g, 'l')
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const fmtNum = v => String(Math.round((Number(v) + Number.EPSILON) * 1000) / 1000);
+const parseQty = raw => { const v = parseFloat(String(raw).replace(',', '.')); return isFinite(v) ? v : NaN; };
+
+function api(path, opts = {}) {
+  const url = path + (path.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(TOKEN);
+  return fetch(url, {
+    method: opts.method || 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+    cache: 'no-store',
+  }).then(async r => ({ ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) }));
+}
+
+/* ── очередь отправки ── */
+const queue = () => { try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); } catch (e) { return []; } };
+const setQueue = q => { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); paintNet(); };
+
+function paintNet() {
+  const n = queue().length;
+  const el = $('#net');
+  el.classList.toggle('off', !navigator.onLine || n > 0);
+  el.title = n ? `${n} zgłoszeń czeka na wysyłkę` : 'Połączenie';
+}
+
+let sending = false;
+async function flush(silent = true) {
+  const q = queue();
+  if (!q.length || sending || !navigator.onLine) return;
+  sending = true;
+  try {
+    for (const report of q) {
+      const r = await api('/api/report', { method: 'POST', body: report });
+      if (r.ok) {
+        setQueue(queue().filter(x => x.id !== report.id));
+        if (!silent) toast('Wysłano zaległe zgłoszenie');
+      } else if (r.status >= 400 && r.status < 500 && r.status !== 429) {
+        // сервер сказал «так нельзя» — повтор не поможет, иначе застрянет навсегда
+        setQueue(queue().filter(x => x.id !== report.id));
+        toast('Zgłoszenie odrzucone: ' + (r.data.error || 'błąd'), false);
+      } else {
+        break;                       // сеть или перегрузка — попробуем позже
+      }
+    }
+  } catch (e) { /* связь пропала — оставляем в очереди */ }
+  finally { sending = false; paintNet(); }
+}
+
+/* ── каталог ── */
+async function loadCatalog() {
+  const cached = localStorage.getItem(CAT_KEY);
+  if (cached) applyCatalog(JSON.parse(cached));
+  const r = await api('/api/catalog');
+  if (r.ok) {
+    localStorage.setItem(CAT_KEY, JSON.stringify(r.data));
+    applyCatalog(r.data);
+    paintNet();
+    flush();
+  } else if (r.status === 403) {
+    document.body.innerHTML = '<p class="empty">Brak dostępu.<br>'
+      + 'Zeskanuj QR-kod wiszący w kuchni.</p>';
+  } else {
+    $('#net').classList.add('off');
+  }
+}
+
+function applyCatalog(d) {
+  S.items = d.items || [];
+  S.reasons = d.reasons || [];
+  S.today = d.today || S.today;
+  $('#kitchen').textContent = d.kitchen || 'Straty';
+  $('#today').textContent = new Date(S.today + 'T12:00:00')
+    .toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' });
+  S.cats = [...new Set(S.items.map(i => i.category).filter(Boolean))].sort();
+  $('#no-catalog').classList.toggle('hidden', S.items.length > 0);
+  renderCats();
+  renderItems();
+}
+
+function renderCats() {
+  const box = $('#cats');
+  box.innerHTML = '';
+  const mk = (label, val) => {
+    const b = document.createElement('button');
+    b.className = 'chip' + (S.cat === val ? ' on' : '');
+    b.textContent = label;
+    b.onclick = () => { S.cat = val; renderCats(); renderItems(); };
+    box.appendChild(b);
+  };
+  mk('Wszystko', '');
+  S.cats.forEach(c => mk(c, c));
+}
+
+function renderItems() {
+  const q = norm(S.search);
+  const list = S.items.filter(i => (!S.cat || i.category === S.cat)
+    && (!q || norm(i.name).includes(q) || norm(i.category).includes(q)));
+  const box = $('#items');
+  box.innerHTML = '';
+  list.forEach(i => {
+    const b = document.createElement('button');
+    b.className = 'item';
+    b.innerHTML = '<span class="grow"><span class="name"></span>'
+      + '<span class="meta"></span></span><span class="u"></span>';
+    $('.name', b).textContent = i.name;
+    $('.meta', b).textContent = i.category || '';
+    $('.u', b).textContent = i.unit;
+    b.onclick = () => openSheet(i);
+    box.appendChild(b);
+  });
+  $('#no-items').classList.toggle('hidden', list.length > 0 || !S.items.length);
+}
+
+/* ── панель количества ── */
+function openSheet(item) {
+  S.sheetItem = item;
+  S.unit = item.unit;
+  S.reason = '';
+  $('#s-name').textContent = item.name;
+  $('#s-cat').textContent = item.category || '';
+  $('#s-qty').value = '1';
+  $('#s-note').value = '';
+  renderUnits(); renderQuick(); renderReasons();
+  $('#backdrop').classList.remove('hidden');
+  $('#sheet').classList.remove('hidden');
+}
+
+function closeSheet() {
+  $('#sheet').classList.add('hidden');
+  $('#backdrop').classList.add('hidden');
+  S.sheetItem = null;
+}
+
+function renderUnits() {
+  const box = $('#s-units');
+  box.innerHTML = '';
+  const units = S.sheetItem.units && S.sheetItem.units.length
+    ? S.sheetItem.units : [S.sheetItem.unit];
+  if (units.length < 2) {
+    const s = document.createElement('span');
+    s.className = 'chip on';
+    s.textContent = units[0];
+    box.appendChild(s);
+    return;
+  }
+  units.forEach(u => {
+    const b = document.createElement('button');
+    b.className = 'chip' + (u === S.unit ? ' on' : '');
+    b.textContent = u;
+    b.onclick = () => { S.unit = u; renderUnits(); renderQuick(); };
+    box.appendChild(b);
+  });
+}
+
+function renderQuick() {
+  const box = $('#s-quick');
+  box.innerHTML = '';
+  (QUICK[S.unit] || []).forEach(v => {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.textContent = fmtNum(v) + ' ' + S.unit;
+    b.onclick = () => { $('#s-qty').value = fmtNum(v); };
+    box.appendChild(b);
+  });
+}
+
+function renderReasons() {
+  const box = $('#s-reasons');
+  box.innerHTML = '';
+  if (!S.reasons.length) {
+    box.innerHTML = '<span class="muted small">Brak powodów w katalogu.</span>';
+    return;
+  }
+  S.reasons.forEach(r => {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.textContent = r;
+    b.onclick = () => {
+      S.reason = (S.reason === r) ? '' : r;      // повторное касание снимает
+      $$('#s-reasons .chip').forEach(c => c.classList.toggle('on', c.textContent === S.reason));
+    };
+    box.appendChild(b);
+  });
+}
+
+function bump(sign) {
+  const step = STEP[S.unit] || 1;
+  let v = parseQty($('#s-qty').value);
+  if (!isFinite(v)) v = 0;
+  $('#s-qty').value = fmtNum(Math.max(step, Math.round((v + sign * step) * 1000) / 1000));
+}
+
+function addLine() {
+  const item = S.sheetItem;
+  if (!item) return;
+  const qty = parseQty($('#s-qty').value);
+  if (!isFinite(qty) || qty <= 0) { toast('Podaj ilość', false); return; }
+  const line = { key: uid(), item_id: item.id, item_name: item.name,
+                 qty: fmtNum(qty), unit: S.unit, reason: S.reason,
+                 note: $('#s-note').value.trim() };
+  S.lines.push(line);
+  closeSheet();
+  renderLines();
+  toast(`Dodano: ${item.name} ${line.qty} ${line.unit}`, true,
+    () => { S.lines = S.lines.filter(l => l.key !== line.key); renderLines(); });
+}
+
+function renderLines() {
+  const box = $('#lines');
+  box.innerHTML = '';
+  S.lines.forEach(l => {
+    const div = document.createElement('div');
+    div.className = 'line';
+    div.innerHTML = '<span class="grow"><span class="t1"></span>'
+      + '<span class="t2"></span></span><span class="qty"></span>'
+      + '<button class="del" aria-label="Usuń">🗑</button>';
+    $('.t1', div).textContent = l.item_name;
+    $('.t2', div).textContent = [l.reason, l.note].filter(Boolean).join(' · ');
+    $('.qty', div).textContent = l.qty + ' ' + l.unit;
+    $('.del', div).onclick = () => {
+      S.lines = S.lines.filter(x => x.key !== l.key);
+      renderLines();
+    };
+    box.appendChild(div);
+  });
+  $('#lines-box').classList.toggle('hidden', !S.lines.length);
+  $('#count').textContent = S.lines.length
+    ? `${S.lines.length} ${plural(S.lines.length, 'pozycja', 'pozycje', 'pozycji')} w zgłoszeniu`
+    : 'Nic jeszcze nie dodano';
+  $('#send').disabled = !S.lines.length;
+}
+
+function plural(n, one, few, many) {
+  const n10 = n % 10, n100 = n % 100;
+  if (n === 1) return one;
+  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return few;
+  return many;
+}
+
+/* ── отправка ── */
+async function send() {
+  const person = $('#person').value.trim();
+  if (person.length < 2) {
+    toast('Podaj imię', false);
+    $('#person').focus();
+    return;
+  }
+  localStorage.setItem(PERSON_KEY, person);
+  const report = {
+    id: uid(), name: person, shift_date: S.today,
+    lines: S.lines.map(l => ({ item_id: l.item_id, item_name: l.item_name,
+                               qty: l.qty, unit: l.unit, reason: l.reason,
+                               note: l.note })),
+  };
+  const n = S.lines.length;
+  $('#send').disabled = true;
+
+  let ok = false, offline = false;
+  try {
+    const r = await api('/api/report', { method: 'POST', body: report });
+    ok = r.ok;
+    if (!ok && r.status !== 429 && r.status < 500) {
+      toast(r.data.error || 'Nie udało się wysłać', false);
+      $('#send').disabled = false;
+      return;
+    }
+    if (!ok) offline = true;
+  } catch (e) {
+    offline = true;
+  }
+  if (offline) setQueue(queue().concat([report]));
+
+  S.lines = [];
+  renderLines();
+  showDone(n, offline);
+}
+
+function showDone(n, offline) {
+  $('#v-main').classList.add('hidden');
+  $('#v-done').classList.remove('hidden');
+  $('#bar').classList.add('hidden');
+  $('#done-title').textContent = offline ? 'Zapisane offline' : 'Wysłane';
+  $('#done-text').textContent = offline
+    ? `${n} ${plural(n, 'pozycja', 'pozycje', 'pozycji')} — wyślemy automatycznie, `
+      + 'gdy wróci internet. Możesz zamknąć stronę.'
+    : `${n} ${plural(n, 'pozycja', 'pozycje', 'pozycji')} — menedżer zatwierdzi `
+      + 'zgłoszenie w aplikacji.';
+  $('#v-done .mark').textContent = offline ? '⏳' : '✅';
+}
+
+function again() {
+  $('#v-done').classList.add('hidden');
+  $('#v-main').classList.remove('hidden');
+  $('#bar').classList.remove('hidden');
+  $('#send').disabled = true;
+  S.search = '';
+  $('#search').value = '';
+  renderItems();
+  window.scrollTo(0, 0);
+}
+
+let toastTimer = null;
+function toast(text, good = true, undo = null) {
+  const box = $('#toast');
+  $('#toast-text').textContent = text;
+  box.classList.toggle('bad', !good);
+  box.classList.remove('hidden');
+  const btn = $('#toast-undo');
+  btn.classList.toggle('hidden', !undo);
+  btn.onclick = () => { box.classList.add('hidden'); undo && undo(); };
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => box.classList.add('hidden'), undo ? 5000 : 2400);
+}
+
+/* ── события ── */
+$('#search').oninput = e => { S.search = e.target.value; renderItems(); };
+$('#clear').onclick = () => { S.search = ''; $('#search').value = ''; renderItems(); };
+$('#s-close').onclick = closeSheet;
+$('#backdrop').onclick = closeSheet;
+$('#s-minus').onclick = () => bump(-1);
+$('#s-plus').onclick = () => bump(1);
+$('#s-add').onclick = addLine;
+$('#send').onclick = send;
+$('#again').onclick = again;
+window.addEventListener('online', () => { paintNet(); flush(false); });
+window.addEventListener('offline', paintNet);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) flush(); });
+setInterval(flush, 30000);
+
+$('#person').value = localStorage.getItem(PERSON_KEY) || '';
+renderLines();
+paintNet();
+loadCatalog();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => { /* без HTTPS — не беда */ });
+}
+
+/* ── установка на планшет ──
+   Chrome сам решает, когда форму можно поставить как приложение, и шлёт
+   beforeinstallprompt — тогда показываем кнопку. Уже запущенная с иконки
+   форма (fullscreen/standalone) кнопку не показывает. */
+const installed = () => matchMedia('(display-mode: fullscreen)').matches
+  || matchMedia('(display-mode: standalone)').matches;
+let installEvt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  installEvt = e;
+  $('#install').classList.toggle('hidden', installed());
+});
+$('#install').onclick = async () => {
+  if (!installEvt) return;
+  installEvt.prompt();
+  await installEvt.userChoice.catch(() => null);
+  installEvt = null;
+  $('#install').classList.add('hidden');
+};
+window.addEventListener('appinstalled', () => {
+  $('#install').classList.add('hidden');
+  toast('Zainstalowano — ikona jest na ekranie głównym');
+});
+</script>
+</body>
+</html>

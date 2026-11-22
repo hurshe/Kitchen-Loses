@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+# базы: локальная у менеджера и очередь на сервере — данные, не код
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.db.bak-*
+# сборка
+build/
+dist/
+Output/
+*.xlsx
+.venv/
+venv/
+.env
