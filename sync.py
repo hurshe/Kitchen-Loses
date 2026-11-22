@@ -1,6 +1,6 @@
 """Связь менеджерского приложения с сервером зашлушений.
 
-Тонкий слой поверх httpx — ровно четыре операции. Вынесен отдельно от
+Тонкий слой поверх httpx — по горсти операций на страты и на чек-листы. Вынесен отдельно от
 интерфейса, чтобы автопроверки могли гонять его с подменённым транспортом,
 не поднимая окно.
 
@@ -73,3 +73,26 @@ async def delete_report(url, token, report_id):
 async def push_catalog(url, token, catalog: dict):
     """Выгрузить каталог позиций и причин — форма покажет его поварам."""
     return await _request("POST", url, token, "/api/catalog", json=catalog)
+
+
+# ────────────────────────────── checklisty ──────────────────────────
+async def push_checklists(url, token, catalog: dict):
+    """Выгрузить шаблоны чек-листов — их увидят на телефонах."""
+    return await _request("POST", url, token, "/api/checklists", json=catalog)
+
+
+async def fetch_checklist_reports(url, token):
+    """Заполненные чек-листы, ждущие на сервере. Отдаёт список словарей."""
+    ok, data = await _request("GET", url, token, "/api/checklist-reports")
+    if not ok:
+        return False, data
+    return True, data.get("reports", [])
+
+
+async def delete_checklist_report(url, token, report_id):
+    """Убрать чек-лист с сервера — после того как он лёг в локальный архив."""
+    ok, data = await _request("DELETE", url, token,
+                              f"/api/checklist-reports/{report_id}")
+    if not ok and data.startswith("Nie znaleziono"):
+        return True, {}
+    return ok, data

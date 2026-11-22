@@ -195,6 +195,8 @@ main{padding:12px 14px 20px}
     <div class="subline" id="today">—</div>
   </div>
   <div class="top-right">
+    <a class="btn install" id="to-checklists" href="#"
+       style="text-decoration:none">Checklisty</a>
     <button class="btn install hidden" id="install">⤓ Zainstaluj</button>
     <span class="net" id="net" title="Połączenie"></span>
   </div>
@@ -639,6 +641,7 @@ window.addEventListener('offline', paintNet);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) flush(); });
 setInterval(flush, 30000);
 
+$('#to-checklists').href = '/checklists?t=' + encodeURIComponent(TOKEN);
 $('#person').value = localStorage.getItem(PERSON_KEY) || '';
 renderLines();
 paintNet();

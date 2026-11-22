@@ -1,0 +1,1010 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#12151c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Checklisty</title>
+<link rel="icon" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<script>
+(function () {
+  var t = new URLSearchParams(location.search).get('t');
+  try { t = t || localStorage.getItem('kuchnia_form_token'); } catch (e) {}
+  if (!t) return;
+  var l = document.createElement('link');
+  l.rel = 'manifest';
+  l.href = '/manifest.webmanifest?t=' + encodeURIComponent(t);
+  document.head.appendChild(l);
+})();
+</script>
+<style>
+/* Заполнение чек-листов. Шаблоны рисует менеджер в приложении; здесь их
+   только заполняют и отправляют. Та же палитра и те же размеры целей,
+   что у формы страт: 44px+ под палец, поля 16px+ (иначе телефон зумит). */
+:root{
+  --bg:#12151c; --bg2:#191d27; --bg3:#222836; --line:#2c3444;
+  --fg:#eef2f8; --muted:#8e9ab0; --accent:#D9952E; --accent-2:#f0ad45;
+  --ok:#34d399; --warn:#fbbf24; --danger:#f87171; --radius:14px; --bar:72px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
+  font:16px/1.4 -apple-system,"Segoe UI",Roboto,system-ui,sans-serif;
+  overscroll-behavior-y:none}
+button,input,select{font:inherit;color:inherit}
+.hidden{display:none !important}
+.muted{color:var(--muted)} .small{font-size:13px}
+.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;
+  background:var(--bg2);border-bottom:1px solid var(--line);
+  padding:calc(10px + env(safe-area-inset-top)) 14px 10px}
+.top .grow{flex:1;min-width:0}
+.kitchen{font-weight:700;font-size:17px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.subline{color:var(--muted);font-size:13px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.net{flex:0 0 auto;width:11px;height:11px;border-radius:50%;background:var(--ok);
+  box-shadow:0 0 0 3px rgba(52,211,153,.15)}
+.net.off{background:var(--warn);box-shadow:0 0 0 3px rgba(251,191,36,.15)}
+.icon-btn{flex:0 0 auto;min-width:44px;height:44px;border:0;background:transparent;
+  color:var(--fg);font-size:22px;border-radius:10px}
+.icon-btn:active{background:var(--bg3)}
+.toplink{flex:0 0 auto;display:inline-flex;align-items:center;min-height:40px;
+  padding:8px 14px;border:1px solid var(--line);border-radius:var(--radius);
+  color:var(--fg);text-decoration:none;font-size:15px;font-weight:600}
+main{max-width:1280px;margin:0 auto;padding:14px 14px 28px}
+main.fill{padding-bottom:calc(var(--bar) + 28px + env(safe-area-inset-bottom))}
+.sect{color:var(--muted);font-size:13px;margin:18px 2px 8px;
+  text-transform:uppercase;letter-spacing:.4px}
+.cards{display:grid;gap:10px}
+@media(min-width:700px){.cards{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}}
+.tcard{display:flex;align-items:center;gap:12px;width:100%;min-height:68px;
+  padding:14px 16px;text-align:left;background:var(--bg2);
+  border:1px solid var(--line);border-radius:var(--radius)}
+.tcard:active{background:var(--bg3);border-color:var(--accent)}
+.tcard .grow{flex:1;min-width:0}
+.tcard .n{display:block;font-weight:700;font-size:16.5px}
+.tcard .m{display:block;color:var(--muted);font-size:13px;margin-top:2px}
+.tcard .go{color:var(--muted);font-size:22px}
+.pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:999px;
+  border:1px solid var(--accent);color:var(--accent);margin-left:6px;
+  white-space:nowrap}
+.empty{text-align:center;color:var(--muted);padding:36px 10px}
+.sent{display:flex;justify-content:space-between;gap:10px;padding:10px 4px;
+  border-bottom:1px solid var(--line);font-size:14.5px}
+.sent:last-child{border-bottom:0}
+
+/* ── заполнение ── */
+.panel{background:var(--bg2);border:1px solid var(--line);
+  border-radius:18px;padding:14px;margin:0 0 14px}
+.panel h3{margin:0 0 10px;font-size:16px;letter-spacing:.3px}
+.desc{color:var(--muted);font-size:14px;margin:0 2px 12px}
+.meta{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.fld{display:block;color:var(--muted);font-size:13px;min-width:0}
+.fld>.ctl{display:block;margin-top:5px}
+.fld.miss>.cap{color:var(--danger)}
+.req{color:var(--accent)}
+input.in,select.in{display:block;width:100%;height:46px;padding:0 12px;
+  font-size:16.5px;color:var(--fg);background:var(--bg);
+  border:1px solid var(--line);border-radius:12px;min-width:0}
+input.in:focus,select.in:focus{outline:none;border-color:var(--accent)}
+input.in.bad{border-color:var(--danger);background:#2a1f20;color:#ffd9d9}
+input[type=date].in,input[type=time].in{color-scheme:dark}
+.num{display:flex;gap:6px;align-items:center}
+.num input{text-align:center;font-weight:700;padding:0 6px}
+.num .pm{flex:0 0 auto;width:40px;height:46px;border:1px solid var(--line);
+  border-radius:12px;background:var(--bg3);font-size:18px}
+.tap{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;
+  min-height:46px;padding:6px 10px;border:1px dashed var(--line);
+  border-radius:12px;background:var(--bg);color:var(--muted);font-size:15px;
+  white-space:nowrap}
+.tap:active{border-color:var(--accent);color:var(--fg)}
+.tap.set{border-style:solid;color:var(--fg);font-weight:600;
+  overflow:hidden;text-overflow:ellipsis}
+.tap.set .x{color:var(--muted);font-weight:400}
+.withx{display:flex;gap:6px}
+.withx .xbtn{flex:0 0 auto;width:40px;height:46px;border:1px solid var(--line);
+  border-radius:12px;background:var(--bg3);color:var(--muted);font-size:16px}
+.chk{width:48px;height:46px;border:1px solid var(--line);border-radius:12px;
+  background:var(--bg);font-size:24px;font-weight:700;color:transparent;
+  flex:0 0 auto}
+.chk.on{background:var(--ok);border-color:var(--ok);color:#06281b}
+.seg{display:flex;gap:4px;flex-wrap:wrap}
+.seg button{min-width:48px;min-height:46px;padding:6px 10px;
+  border:1px solid var(--line);border-radius:12px;background:var(--bg);
+  font-size:14.5px;color:var(--muted)}
+.seg button.on{background:var(--accent);border-color:var(--accent);
+  color:#1b1200;font-weight:700}
+.seg button.on.no{background:var(--danger);border-color:var(--danger);color:#2b0a0a}
+
+.grid .row{border-top:1px solid var(--line);padding:10px 0}
+.grid .row:first-child{border-top:0}
+.rl{min-width:0;font-size:15px;line-height:1.3}
+.rl .lim{display:block;color:var(--muted);font-size:12.5px;margin-top:2px}
+.rl input.in{height:44px}
+.cell{min-width:0}
+.cell.off{background:repeating-linear-gradient(135deg,transparent,
+  transparent 5px,var(--line) 5px,var(--line) 6px);border-radius:10px;
+  min-height:46px;opacity:.7}
+.cell.miss .in,.cell.miss .tap,.cell.miss .chk,.cell.miss .seg button{
+  border-color:var(--danger)}
+.rowdel{border:0;background:transparent;color:var(--danger);font-size:17px;
+  min-width:40px;height:44px}
+/* карточки (телефон): подпись колонки над каждым полем */
+.grid.cards-mode .row{display:block}
+.grid.cards-mode .rl{margin-bottom:8px;font-weight:600}
+.grid.cards-mode .cells{display:grid;gap:8px 10px;
+  grid-template-columns:repeat(auto-fill,minmax(132px,1fr))}
+.grid.cards-mode .cell::before{content:attr(data-label);display:block;
+  color:var(--muted);font-size:12px;margin-bottom:3px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.grid.cards-mode .cell.off{display:none}
+.grid.cards-mode .cell.wide{grid-column:1/-1}
+.grid.cards-mode .hdr{display:none}
+/* одна колонка-галочка: пункт слева, галочка справа — как на бумаге */
+.grid.one-check .row{display:flex;align-items:center;gap:12px}
+.grid.one-check .rl{flex:1;margin:0;font-weight:400}
+.grid.one-check .cells{display:block}
+.grid.one-check .cell::before{display:none}
+/* таблица (планшет): настоящая сетка, как на бумажном листе */
+.grid.tbl-mode .row,.grid.tbl-mode .hdr{display:grid;gap:6px;align-items:center;
+  grid-template-columns:var(--tpl)}
+.grid.tbl-mode .cells{display:contents}
+.grid.tbl-mode .hdr{padding:0 0 8px;color:var(--accent);font-size:12px;
+  font-weight:700;border-bottom:1px solid var(--line)}
+.grid.tbl-mode .hdr span{min-width:0;text-align:center;overflow-wrap:anywhere}
+.grid.tbl-mode .hdr span:first-child{text-align:left}
+.grid.tbl-mode .cell{display:flex;justify-content:center}
+.grid.tbl-mode .cell>*{width:100%}
+.grid.tbl-mode .cell>.chk{width:48px}
+.grid.tbl-mode .in{padding:0 6px;font-size:15.5px}
+.grid.tbl-mode .tap{padding:6px 4px;font-size:14px}
+.grid.tbl-mode .xbtn{display:none}
+/* «±» в таблице всплывает под активным полем — в клетку 78px не влезает */
+.grid.tbl-mode .num{position:relative}
+.grid.tbl-mode .num .pm{display:none;position:absolute;top:calc(100% + 4px);
+  left:0;right:0;width:auto;z-index:5;border-color:var(--accent);
+  box-shadow:0 6px 16px rgba(0,0,0,.45)}
+.grid.tbl-mode .num:focus-within .pm{display:block}
+.addrow{margin-top:10px}
+.signline{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);
+  max-width:320px}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;
+  min-height:48px;padding:12px 18px;border:1px solid var(--line);
+  border-radius:var(--radius);background:var(--bg2);color:var(--fg);
+  font-size:16px;font-weight:600}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#1b1200}
+.btn.primary:active{background:var(--accent-2)}
+.btn.ghost{background:transparent;color:var(--muted)}
+.btn.danger{color:var(--danger);border-color:rgba(248,113,113,.45)}
+.btn.wide{width:100%}
+.btn:disabled{opacity:.5}
+.bar{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--bg2);
+  border-top:1px solid var(--line);
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom))}
+.bar .in-bar{max-width:1252px;margin:0 auto;display:flex;align-items:center;gap:12px}
+.bar .prog{flex:1;min-width:0}
+.bar .ptxt{font-size:13.5px;color:var(--muted);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.bar .ptxt b{color:var(--danger);font-weight:600}
+.track{height:6px;border-radius:3px;background:var(--bg3);margin-top:6px;overflow:hidden}
+.track i{display:block;height:100%;background:var(--ok);width:0;transition:width .2s}
+.bar .btn{min-width:150px}
+.done{text-align:center;padding:40px 16px;max-width:520px;margin:0 auto}
+.done .mark{font-size:56px}
+.done h2{margin:12px 0 6px}
+.toast{position:fixed;left:12px;right:12px;z-index:60;
+  bottom:calc(var(--bar) + 12px + env(safe-area-inset-bottom));
+  padding:14px 16px;border-radius:var(--radius);background:#1f2a20;
+  border:1px solid rgba(52,211,153,.4);color:#d7f7e6;font-size:15px;
+  box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:560px;margin:0 auto}
+.toast.bad{background:#2a1f20;border-color:rgba(248,113,113,.45);color:#ffd9d9}
+.backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:40}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:50;background:var(--bg2);
+  border-top:1px solid var(--line);border-radius:20px 20px 0 0;
+  padding:18px 16px calc(20px + env(safe-area-inset-bottom));max-width:560px;
+  margin:0 auto}
+.sheet h3{margin:0 0 8px}
+.sheet .acts{display:flex;gap:10px;margin-top:16px}
+.sheet .acts .btn{flex:1}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <button class="icon-btn hidden" id="back" aria-label="Wróć">‹</button>
+  <div class="grow">
+    <div class="kitchen" id="title">Checklisty</div>
+    <div class="subline" id="sub">—</div>
+  </div>
+  <a class="toplink" id="to-form" href="#">Straty</a>
+  <span class="net" id="net" title="Połączenie"></span>
+</header>
+
+<main id="main">
+  <!-- ── список чек-листов ── -->
+  <section id="v-home">
+    <div id="drafts-box" class="hidden">
+      <div class="sect">W trakcie</div>
+      <div class="cards" id="drafts"></div>
+    </div>
+    <div class="sect">Checklisty</div>
+    <div class="cards" id="templates"></div>
+    <p id="no-templates" class="empty hidden">Nie ma jeszcze żadnej checklisty.<br>
+      <span class="small">Menedżer tworzy je w aplikacji i wysyła na serwer.</span></p>
+    <div id="sent-box" class="hidden">
+      <div class="sect">Ostatnio wysłane z tego urządzenia</div>
+      <div class="panel" id="sent"></div>
+    </div>
+  </section>
+
+  <!-- ── заполнение ── -->
+  <section id="v-fill" class="hidden">
+    <p class="desc hidden" id="f-desc"></p>
+    <div class="panel"><div class="meta" id="f-meta"></div></div>
+    <div id="f-sections"></div>
+    <div class="panel hidden" id="f-footer-box"><div class="meta" id="f-footer"></div></div>
+    <button class="btn ghost danger" id="discard">Usuń wersję roboczą</button>
+  </section>
+
+  <!-- ── отправлено ── -->
+  <section id="v-done" class="done hidden">
+    <div class="mark" id="done-mark">✅</div>
+    <h2 id="done-title">Wysłane</h2>
+    <p class="muted" id="done-text"></p>
+    <button class="btn primary wide" id="done-back" style="margin-top:20px">
+      Wróć do listy</button>
+  </section>
+</main>
+
+<div class="bar hidden" id="bar"><div class="in-bar">
+  <div class="prog"><div class="ptxt" id="ptxt">—</div>
+    <div class="track"><i id="pbar"></i></div></div>
+  <button class="btn primary" id="send">Wyślij</button>
+</div></div>
+
+<div class="backdrop hidden" id="backdrop"></div>
+<div class="sheet hidden" id="sheet">
+  <h3 id="sheet-title"></h3>
+  <div class="muted" id="sheet-text"></div>
+  <div class="acts">
+    <button class="btn" id="sheet-no">Wróć</button>
+    <button class="btn primary" id="sheet-yes">Wyślij</button>
+  </div>
+</div>
+<div id="toast" class="toast hidden"></div>
+
+<script>
+'use strict';
+/* Заполнение чек-листов.
+   1) Шаблоны приходят с сервера (их туда кладёт приложение менеджера).
+   2) Начатый лист — «wersja robocza» — живёт в localStorage и сохраняется на
+      каждом касании: температурный лист заполняют весь день, и закрытая
+      вкладка не должна его стирать. Черновик хранит снимок шаблона, поэтому
+      правка шаблона менеджером не ломает уже начатый лист.
+   3) Отправка — как у страт: id даёт устройство, без сети лист ложится в
+      очередь и уезжает сам. */
+
+const $ = (s, r = document) => r.querySelector(s);
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+};
+
+const TOKEN = new URLSearchParams(location.search).get('t')
+  || localStorage.getItem('kuchnia_form_token') || '';
+if (TOKEN) localStorage.setItem('kuchnia_form_token', TOKEN);
+
+const CAT_KEY = 'kuchnia_cl_catalog';
+const DRAFTS_KEY = 'kuchnia_cl_drafts';
+const QUEUE_KEY = 'kuchnia_cl_queue';
+const SENT_KEY = 'kuchnia_cl_sent';
+const PERSON_KEY = 'kuchnia_form_person';      // общее с формой страт
+const SIGN_ROW = '_sign';
+const NUMERIC = ['number', 'temp'];
+const PERIOD = { daily: 'codzienna', weekly: 'tygodniowa',
+                 monthly: 'miesięczna', any: '' };
+// ширина колонки в режиме таблицы; text растягивается, остальные жёсткие
+const COLW = { check: 56, yesno: 160, text: 110, number: 78, temp: 78,
+               time: 108, date: 136, choice: 140, sign: 120 };
+
+const S = { templates: [], kitchen: '', today: localDate(), draft: null,
+            missing: new Set() };
+
+function localDate() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+    + '-' + String(d.getDate()).padStart(2, '0');
+}
+const nowTime = () => {
+  const d = new Date();
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+};
+const uid = () => (Date.now().toString(36) + Math.random().toString(36).slice(2, 10)).slice(0, 20);
+const rid = () => Math.random().toString(36).slice(2, 10);
+const fmtNum = v => String(Math.round((Number(v) + Number.EPSILON) * 1000) / 1000);
+const parseNum = raw => {
+  if (raw == null || raw === '' || typeof raw === 'boolean') return null;
+  const v = Number(String(raw).trim().replace(',', '.').replace('−', '-'));
+  return isFinite(v) && String(raw).trim() !== '' ? v : NaN;
+};
+const isEmpty = v => v == null || v === false || (typeof v === 'string' && !v.trim());
+const prettyDate = iso => new Date(iso + 'T12:00:00').toLocaleDateString('pl-PL',
+  { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch (e) { return d; } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { toast('Pamięć urządzenia jest pełna', false); } };
+
+function api(path, opts = {}) {
+  const url = path + (path.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(TOKEN);
+  return fetch(url, {
+    method: opts.method || 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+    cache: 'no-store',
+  }).then(async r => ({ ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) }));
+}
+
+/* ── очередь отправки ── */
+const queue = () => load(QUEUE_KEY, []);
+const setQueue = q => { save(QUEUE_KEY, q); paintNet(); };
+
+function paintNet() {
+  const n = queue().length;
+  $('#net').classList.toggle('off', !navigator.onLine || n > 0);
+  $('#net').title = n ? `${n} checklist czeka na wysyłkę` : 'Połączenie';
+}
+
+let sending = false;
+async function flush(silent = true) {
+  const q = queue();
+  if (!q.length || sending || !navigator.onLine) return;
+  sending = true;
+  try {
+    for (const rep of q) {
+      const r = await api('/api/checklist-report', { method: 'POST', body: rep });
+      if (r.ok) {
+        setQueue(queue().filter(x => x.id !== rep.id));
+        markSent(rep.id);
+        if (!silent) toast('Wysłano zaległą checklistę');
+      } else if (r.status >= 400 && r.status < 500 && r.status !== 429) {
+        // сервер сказал «так нельзя» — повтор не поможет
+        setQueue(queue().filter(x => x.id !== rep.id));
+        toast('Checklista odrzucona: ' + (r.data.error || 'błąd'), false);
+      } else break;
+    }
+  } catch (e) { /* связь пропала — оставляем в очереди */ }
+  finally { sending = false; paintNet(); if (!S.draft) renderHome(); }
+}
+
+/* ── каталог шаблонов ── */
+async function loadCatalog() {
+  const cached = load(CAT_KEY, null);
+  if (cached) applyCatalog(cached);
+  let r;
+  try { r = await api('/api/checklists'); } catch (e) { $('#net').classList.add('off'); return; }
+  if (r.ok) {
+    save(CAT_KEY, r.data);
+    applyCatalog(r.data);
+    paintNet();
+    flush();
+  } else if (r.status === 403) {
+    document.body.innerHTML = '<p class="empty">Brak dostępu.<br>'
+      + 'Zeskanuj QR-kod wiszący w kuchni.</p>';
+  } else $('#net').classList.add('off');
+}
+
+function applyCatalog(d) {
+  S.templates = d.templates || [];
+  S.kitchen = d.kitchen || '';
+  S.today = d.today || S.today;
+  if (!S.draft) renderHome();
+}
+
+/* ── черновики ── */
+const drafts = () => load(DRAFTS_KEY, {});
+function saveDraft() {
+  if (!S.draft) return;
+  S.draft.updated_at = Date.now();
+  const all = drafts();
+  all[S.draft.id] = S.draft;
+  save(DRAFTS_KEY, all);
+}
+let saveTimer = null;
+function touch() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveDraft, 250);
+  paintProgress();
+}
+function dropDraft(id) {
+  const all = drafts();
+  delete all[id];
+  save(DRAFTS_KEY, all);
+}
+const blankRow = () => ({ id: rid(), label: '', min: null, max: null, off: [] });
+
+function newDraft(tpl) {
+  const snap = JSON.parse(JSON.stringify(tpl));
+  snap.sections.forEach(s => {
+    if (s.mode === 'free') {
+      s.rows = [];
+      for (let i = 0; i < (s.free_rows || 3); i++) s.rows.push(blankRow());
+    }
+  });
+  return { id: uid(), template_id: tpl.id, template: snap, date: '',
+           name: localStorage.getItem(PERSON_KEY) || '',
+           values: {}, header: {}, footer: {}, started_at: Date.now() };
+}
+
+/* ── подсчёт: то же, что считает приложение менеджера ── */
+function limitsFor(col, row) {
+  let lo = row ? row.min : null, hi = row ? row.max : null;
+  if (lo == null && hi == null) { lo = col.min; hi = col.max; }
+  return [lo == null ? null : lo, hi == null ? null : hi];
+}
+function limitsText(lo, hi, unit) {
+  const u = unit ? ' ' + unit : '';
+  if (lo != null && hi != null) return fmtNum(lo) + '…' + fmtNum(hi) + u;
+  if (lo != null) return '≥ ' + fmtNum(lo) + u;
+  if (hi != null) return '≤ ' + fmtNum(hi) + u;
+  return '';
+}
+function cellBad(col, row, v) {
+  if (isEmpty(v)) return false;
+  if (col.type === 'yesno') return v === 'nie';
+  if (NUMERIC.includes(col.type)) {
+    const n = parseNum(v);
+    if (n === null) return false;
+    if (isNaN(n)) return true;
+    const [lo, hi] = limitsFor(col, row);
+    return (lo != null && n < lo) || (hi != null && n > hi);
+  }
+  return false;
+}
+const rowUsed = (d, s, r) => !!r.label || s.columns.some(
+  c => !isEmpty(d.values[s.id + '|' + r.id + '|' + c.id]));
+
+function evaluate(d) {
+  let filled = 0, total = 0, bad = 0;
+  const missing = [];
+  d.template.sections.forEach(s => s.rows.forEach(r => {
+    if (s.mode === 'free' && !rowUsed(d, s, r)) return;
+    s.columns.forEach(c => {
+      if (r.off.includes(c.id)) return;
+      const key = s.id + '|' + r.id + '|' + c.id;
+      const v = d.values[key];
+      total++;
+      if (!isEmpty(v)) filled++;
+      else if (c.required) missing.push(key);
+      if (cellBad(c, r, v)) bad++;
+    });
+  }));
+  ['header', 'footer'].forEach(part => d.template[part].forEach(f => {
+    const v = d[part][f.id];
+    total++;
+    if (!isEmpty(v)) filled++;
+    else if (f.required) missing.push(part + '|' + f.id);
+    if (cellBad(f, null, v)) bad++;
+  }));
+  return { filled, total, bad, missing };
+}
+
+/* ── список ── */
+function show(view) {
+  ['home', 'fill', 'done'].forEach(v => $('#v-' + v).classList.toggle('hidden', v !== view));
+  $('#bar').classList.toggle('hidden', view !== 'fill');
+  $('#back').classList.toggle('hidden', view === 'home');
+  $('#main').classList.toggle('fill', view === 'fill');
+  $('#to-form').classList.toggle('hidden', view !== 'home');
+  window.scrollTo(0, 0);
+}
+
+function renderHome() {
+  S.draft = null;
+  show('home');
+  $('#title').textContent = S.kitchen || 'Checklisty';
+  $('#sub').textContent = 'Checklisty · ' + prettyDate(S.today);
+
+  const all = Object.values(drafts()).sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+  const dbox = $('#drafts');
+  dbox.innerHTML = '';
+  all.forEach(d => {
+    const ev = evaluate(d);
+    const b = el('button', 'tcard');
+    const g = el('span', 'grow');
+    g.appendChild(el('span', 'n', d.template.name));
+    g.appendChild(el('span', 'm', (d.date ? prettyDate(d.date) : 'bez daty')
+      + ' · wypełniono ' + ev.filled + ' z ' + ev.total));
+    b.appendChild(g);
+    b.appendChild(el('span', 'go', '›'));
+    b.onclick = () => openDraft(d);
+    dbox.appendChild(b);
+  });
+  $('#drafts-box').classList.toggle('hidden', !all.length);
+
+  const tbox = $('#templates');
+  tbox.innerHTML = '';
+  S.templates.forEach(t => {
+    const b = el('button', 'tcard');
+    const g = el('span', 'grow');
+    const n = el('span', 'n', t.name);
+    const mine = all.find(d => d.template_id === t.id);
+    if (mine) n.appendChild(el('span', 'pill', 'w trakcie'));
+    g.appendChild(n);
+    const rows = t.sections.reduce((a, s) => a + s.rows.length, 0);
+    g.appendChild(el('span', 'm', [PERIOD[t.period] || '',
+      t.sections.length + ' ' + plural(t.sections.length, 'sekcja', 'sekcje', 'sekcji'),
+      rows ? rows + ' ' + plural(rows, 'punkt', 'punkty', 'punktów') : '']
+      .filter(Boolean).join(' · ')));
+    b.appendChild(g);
+    b.appendChild(el('span', 'go', '›'));
+    b.onclick = () => openDraft(mine || newDraft(t));
+    tbox.appendChild(b);
+  });
+  $('#no-templates').classList.toggle('hidden', S.templates.length > 0);
+
+  const sent = load(SENT_KEY, []);
+  const sbox = $('#sent');
+  sbox.innerHTML = '';
+  sent.forEach(x => {
+    const row = el('div', 'sent');
+    row.appendChild(el('span', '', x.name + ' · ' + x.date));
+    row.appendChild(el('span', 'muted', x.queued ? '⏳ czeka na internet' : '✓ ' + x.at));
+    sbox.appendChild(row);
+  });
+  $('#sent-box').classList.toggle('hidden', !sent.length);
+}
+
+function plural(n, one, few, many) {
+  const n10 = n % 10, n100 = n % 100;
+  if (n === 1) return one;
+  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return few;
+  return many;
+}
+
+/* ── поля ── */
+/* Дата и время устроены одинаково: пустое поле — кнопка; касание сразу
+   ставит сегодняшнюю дату (текущее время), без календаря и клавиатуры.
+   После этого значение можно поправить обычным системным выбором. */
+function tapControl(type, value, onChange, big) {
+  const box = el('div', 'ctl');
+  const paint = v => {
+    box.innerHTML = '';
+    if (isEmpty(v)) {
+      const b = el('button', 'tap', type === 'date'
+        ? (big ? '📅 Dotknij — dziś' : '📅 Dziś') : '🕐 Teraz');
+      b.type = 'button';
+      b.onclick = () => { const nv = type === 'date' ? S.today : nowTime(); onChange(nv); paint(nv); };
+      box.appendChild(b);
+    } else {
+      const wrap = el('div', 'withx');
+      const inp = el('input', 'in');
+      inp.type = type;
+      inp.value = v;
+      inp.onchange = () => { onChange(inp.value); if (!inp.value) paint(''); };
+      const x = el('button', 'xbtn', '✕');
+      x.type = 'button';
+      x.setAttribute('aria-label', 'Wyczyść');
+      x.onclick = () => { onChange(''); paint(''); };
+      wrap.appendChild(inp);
+      wrap.appendChild(x);
+      box.appendChild(wrap);
+    }
+  };
+  paint(value);
+  return box;
+}
+
+function control(f, value, onChange, row) {
+  const t = f.type;
+  if (t === 'check') {
+    const b = el('button', 'chk' + (value ? ' on' : ''), '✓');
+    b.type = 'button';
+    b.setAttribute('aria-label', f.label || 'Zaznacz');
+    b.onclick = () => { const on = !b.classList.contains('on'); b.classList.toggle('on', on); onChange(on); };
+    return b;
+  }
+  if (t === 'yesno' || (t === 'choice' && (f.options || []).length <= 4)) {
+    const opts = t === 'yesno' ? [['tak', 'Tak'], ['nie', 'Nie'], ['nd', 'N/D']]
+      : (f.options || []).map(o => [o, o]);
+    const seg = el('div', 'seg');
+    let cur = value || '';
+    opts.forEach(([k, label]) => {
+      const b = el('button', (k === cur ? 'on' : '') + (t === 'yesno' && k === 'nie' ? ' no' : ''), label);
+      b.type = 'button';
+      b.dataset.k = k;
+      b.onclick = () => {
+        cur = cur === k ? '' : k;            // повторное касание снимает
+        [...seg.children].forEach(c => c.classList.toggle('on', c.dataset.k === cur));
+        onChange(cur);
+      };
+      seg.appendChild(b);
+    });
+    return seg;
+  }
+  if (t === 'choice') {
+    const sel = el('select', 'in');
+    sel.appendChild(new Option('—', ''));
+    (f.options || []).forEach(o => sel.appendChild(new Option(o, o)));
+    sel.value = value || '';
+    sel.onchange = () => onChange(sel.value);
+    return sel;
+  }
+  if (NUMERIC.includes(t)) {
+    const wrap = el('div', 'num');
+    const inp = el('input', 'in');
+    inp.type = 'text';
+    inp.inputMode = 'decimal';
+    inp.autocomplete = 'off';
+    inp.value = value == null ? '' : value;
+    const [lo, hi] = limitsFor(f, row);
+    inp.placeholder = limitsText(lo, hi, '') || (f.unit || '');
+    const check = () => inp.classList.toggle('bad', cellBad(f, row, inp.value));
+    inp.oninput = () => { check(); onChange(inp.value.trim()); };
+    check();
+    wrap.appendChild(inp);
+    if (t === 'temp') {
+      // у цифровой клавиатуры телефона нет минуса, а морозилка — это −18
+      const pm = el('button', 'pm', '±');
+      pm.type = 'button';
+      pm.setAttribute('aria-label', 'Zmień znak');
+      // pointerdown + preventDefault: фокус остаётся в поле, клавиатура не
+      // прячется, а в таблице кнопка (видна только у активного поля) не
+      // исчезает раньше, чем сработает
+      pm.onpointerdown = e => {
+        e.preventDefault();
+        const v = inp.value.trim();
+        inp.value = v.startsWith('-') ? v.slice(1) : '-' + v;
+        check(); onChange(inp.value.trim()); inp.focus();
+      };
+      wrap.appendChild(pm);
+    }
+    return wrap;
+  }
+  if (t === 'time' || t === 'date') return tapControl(t, value, onChange);
+  if (t === 'sign') {
+    const b = el('button', 'tap');
+    b.type = 'button';
+    const paint = v => {
+      b.classList.toggle('set', !isEmpty(v));
+      b.textContent = isEmpty(v) ? '✍ Podpisz' : '✍ ' + v;
+    };
+    let cur = value || '';
+    paint(cur);
+    b.onclick = () => {
+      if (cur) { cur = ''; }
+      else {
+        const name = (S.draft.name || '').trim();
+        if (name.length < 2) { toast('Najpierw wpisz imię', false); $('#f-person').focus(); return; }
+        cur = name;
+      }
+      paint(cur); onChange(cur);
+    };
+    return b;
+  }
+  const inp = el('input', 'in');
+  inp.type = 'text';
+  inp.maxLength = 300;
+  inp.value = value || '';
+  inp.oninput = () => onChange(inp.value);
+  return inp;
+}
+
+function fieldBox(f, part) {
+  const d = S.draft;
+  const box = el('label', 'fld');
+  box.dataset.key = part + '|' + f.id;
+  const cap = el('span', 'cap', f.label || '—');
+  if (f.required) cap.appendChild(el('span', 'req', ' *'));
+  box.appendChild(cap);
+  const c = control(f, d[part][f.id], v => { d[part][f.id] = v; touch(); }, null);
+  if (!c.classList.contains('ctl')) { const w = el('span', 'ctl'); w.appendChild(c); box.appendChild(w); }
+  else box.appendChild(c);
+  // label вокруг кнопок дублирует клик — оставляем его только для полей ввода
+  if (['check', 'yesno', 'choice', 'sign', 'time', 'date'].includes(f.type)) {
+    const div = el('div', 'fld');
+    div.dataset.key = box.dataset.key;
+    while (box.firstChild) div.appendChild(box.firstChild);
+    return div;
+  }
+  return box;
+}
+
+/* ── экран заполнения ── */
+function openDraft(d) {
+  S.draft = d;
+  S.missing = new Set();
+  show('fill');
+  renderFill();
+  saveDraft();
+}
+
+function renderFill() {
+  const d = S.draft, t = d.template;
+  $('#title').textContent = t.name;
+  $('#sub').textContent = S.kitchen || 'Checklista';
+  $('#f-desc').textContent = t.description || '';
+  $('#f-desc').classList.toggle('hidden', !t.description);
+
+  const meta = $('#f-meta');
+  meta.innerHTML = '';
+  const dateBox = el('div', 'fld');
+  dateBox.dataset.key = 'date';
+  const dcap = el('span', 'cap', 'Data');
+  dcap.appendChild(el('span', 'req', ' *'));
+  dateBox.appendChild(dcap);
+  dateBox.appendChild(tapControl('date', d.date, v => { d.date = v; touch(); }, true));
+  meta.appendChild(dateBox);
+
+  const pBox = el('label', 'fld');
+  pBox.dataset.key = 'name';
+  const pcap = el('span', 'cap', 'Kto wypełnia');
+  pcap.appendChild(el('span', 'req', ' *'));
+  pBox.appendChild(pcap);
+  const pin = el('input', 'in ctl');
+  pin.id = 'f-person';
+  pin.type = 'text';
+  pin.maxLength = 40;
+  pin.placeholder = 'Imię';
+  pin.autocomplete = 'off';
+  pin.value = d.name || '';
+  pin.oninput = () => { d.name = pin.value; localStorage.setItem(PERSON_KEY, pin.value.trim()); touch(); };
+  pBox.appendChild(pin);
+  meta.appendChild(pBox);
+  t.header.forEach(f => meta.appendChild(fieldBox(f, 'header')));
+
+  const box = $('#f-sections');
+  box.innerHTML = '';
+  t.sections.forEach(s => box.appendChild(sectionEl(s)));
+
+  const foot = $('#f-footer');
+  foot.innerHTML = '';
+  t.footer.forEach(f => foot.appendChild(fieldBox(f, 'footer')));
+  $('#f-footer-box').classList.toggle('hidden', !t.footer.length);
+  layout();
+  paintProgress();
+}
+
+function sectionEl(s) {
+  const d = S.draft;
+  const panel = el('div', 'panel');
+  if (s.title) panel.appendChild(el('h3', '', s.title));
+  const grid = el('div', 'grid');
+  grid.dataset.need = String(180 + s.columns.reduce((a, c) => a + (COLW[c.type] || 120) + 6, 0)
+    + (s.mode === 'free' ? 46 : 0));
+  grid.style.setProperty('--tpl', 'minmax(170px,2fr) '
+    + s.columns.map(c => c.type === 'text' ? 'minmax(110px,1.4fr)'
+      : (COLW[c.type] || 120) + 'px').join(' ') + (s.mode === 'free' ? ' 40px' : ''));
+  grid.dataset.onecheck = (s.columns.length === 1 && s.columns[0].type === 'check'
+    && s.mode !== 'free') ? '1' : '';
+
+  const hdr = el('div', 'hdr');
+  hdr.appendChild(el('span', '', s.label_title || 'Pozycja'));
+  s.columns.forEach(c => {
+    const h = el('span', '', c.label);
+    if (c.required) h.appendChild(el('span', 'req', ' *'));
+    hdr.appendChild(h);
+  });
+  if (s.mode === 'free') hdr.appendChild(el('span', '', ''));
+  grid.appendChild(hdr);
+
+  const addRowEl = r => {
+    const row = el('div', 'row');
+    const rl = el('div', 'rl');
+    if (s.mode === 'free') {
+      const inp = el('input', 'in');
+      inp.type = 'text';
+      inp.maxLength = 240;
+      inp.placeholder = s.label_title || 'Pozycja';
+      inp.value = r.label || '';
+      inp.oninput = () => { r.label = inp.value.trim(); touch(); };
+      rl.appendChild(inp);
+    } else {
+      rl.appendChild(document.createTextNode(r.label));
+      const lim = limitsText(r.min, r.max, '');
+      if (lim) rl.appendChild(el('span', 'lim', 'norma: ' + lim));
+    }
+    row.appendChild(rl);
+    const cells = el('div', 'cells');
+    s.columns.forEach(c => {
+      const key = s.id + '|' + r.id + '|' + c.id;
+      const cell = el('div', 'cell' + (c.type === 'text' ? ' wide' : ''));
+      cell.dataset.key = key;
+      cell.dataset.label = c.label + (c.required ? ' *' : '');
+      if (r.off.includes(c.id)) cell.classList.add('off');
+      else cell.appendChild(control(c, d.values[key], v => {
+        if (isEmpty(v)) delete d.values[key]; else d.values[key] = v;
+        if (S.missing.has(key)) { S.missing.delete(key); cell.classList.remove('miss'); }
+        touch();
+      }, r));
+      cells.appendChild(cell);
+    });
+    if (s.mode === 'free') {
+      const del = el('button', 'rowdel', '🗑');
+      del.type = 'button';
+      del.setAttribute('aria-label', 'Usuń wiersz');
+      del.onclick = () => {
+        s.rows = s.rows.filter(x => x.id !== r.id);
+        s.columns.forEach(c => delete d.values[s.id + '|' + r.id + '|' + c.id]);
+        row.remove(); touch();
+      };
+      cells.appendChild(del);
+    }
+    row.appendChild(cells);
+    grid.appendChild(row);
+  };
+  s.rows.forEach(addRowEl);
+  panel.appendChild(grid);
+
+  if (s.mode === 'free') {
+    const add = el('button', 'btn addrow', '＋ Dodaj wiersz');
+    add.type = 'button';
+    add.onclick = () => {
+      if (s.rows.length >= 200) return;
+      const r = blankRow();
+      s.rows.push(r); addRowEl(r); touch();
+    };
+    panel.appendChild(add);
+  }
+  if (s.sign) {
+    const key = s.id + '|' + SIGN_ROW + '|_';
+    const line = el('div', 'signline fld');
+    line.appendChild(el('span', 'cap', 'Podpis'));
+    const w = el('span', 'ctl');
+    w.appendChild(control({ type: 'sign' }, d.values[key], v => {
+      if (isEmpty(v)) delete d.values[key]; else d.values[key] = v; touch();
+    }, null));
+    line.appendChild(w);
+    panel.appendChild(line);
+  }
+  return panel;
+}
+
+/* Таблица или карточки: решает ширина. Лист на 10 колонок на телефоне в
+   сетку не помещается — там каждая строка раскладывается карточкой. */
+function layout() {
+  document.querySelectorAll('#f-sections .grid').forEach(g => {
+    const fits = Number(g.dataset.need) <= g.clientWidth;
+    g.classList.toggle('tbl-mode', fits);
+    g.classList.toggle('cards-mode', !fits);
+    g.classList.toggle('one-check', !fits && g.dataset.onecheck === '1');
+  });
+}
+
+function paintProgress() {
+  if (!S.draft) return;
+  const ev = evaluate(S.draft);
+  const p = $('#ptxt');
+  p.textContent = `Wypełniono ${ev.filled} z ${ev.total}`;
+  if (ev.bad) {
+    p.appendChild(document.createTextNode(' · '));
+    p.appendChild(el('b', '', ev.bad + ' ' + plural(ev.bad, 'odchylenie', 'odchylenia', 'odchyleń')));
+  }
+  $('#pbar').style.width = (ev.total ? Math.round(100 * ev.filled / ev.total) : 0) + '%';
+}
+
+/* ── отправка ── */
+function markMissing(keys) {
+  document.querySelectorAll('.miss').forEach(e => e.classList.remove('miss'));
+  S.missing = new Set(keys);
+  let first = null;
+  keys.forEach(k => {
+    const e = document.querySelector('[data-key="' + CSS.escape(k) + '"]');
+    if (e) { e.classList.add('miss'); first = first || e; }
+  });
+  if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+function trySend() {
+  const d = S.draft;
+  const ev = evaluate(d);
+  const missing = ev.missing.slice();
+  if ((d.name || '').trim().length < 2) missing.unshift('name');
+  if (!d.date) missing.unshift('date');
+  if (missing.length) {
+    markMissing(missing);
+    toast(!d.date ? 'Dotknij pola „Data”' : (d.name || '').trim().length < 2 ? 'Podaj imię'
+      : `Uzupełnij wymagane pola (${missing.length})`, false);
+    return;
+  }
+  const notes = [];
+  if (ev.filled < ev.total) notes.push(`Wypełniono ${ev.filled} z ${ev.total} pól.`);
+  if (ev.bad) notes.push(`${ev.bad} ${plural(ev.bad, 'odchylenie', 'odchylenia', 'odchyleń')} od normy.`);
+  $('#sheet-title').textContent = 'Wysłać checklistę?';
+  $('#sheet-text').textContent = [d.template.name + ' · ' + prettyDate(d.date)]
+    .concat(notes, ['Po wysłaniu nie da się jej już poprawić.']).join(' ');
+  $('#sheet').classList.remove('hidden');
+  $('#backdrop').classList.remove('hidden');
+}
+const closeSheet = () => { $('#sheet').classList.add('hidden'); $('#backdrop').classList.add('hidden'); };
+
+function markSent(id) {
+  save(SENT_KEY, load(SENT_KEY, []).map(x => x.id === id
+    ? Object.assign(x, { queued: false, at: nowTime() }) : x));
+}
+
+async function send() {
+  closeSheet();
+  clearTimeout(saveTimer);
+  saveDraft();
+  const d = S.draft;
+  const tpl = JSON.parse(JSON.stringify(d.template));
+  // пустые строки журнала в копию не едут
+  tpl.sections.forEach(s => {
+    if (s.mode === 'free') s.rows = s.rows.filter(r => rowUsed(d, s, r));
+  });
+  const report = { id: d.id, template_id: d.template_id, template: tpl,
+                   date: d.date, name: d.name.trim(), values: d.values,
+                   header: d.header, footer: d.footer };
+  $('#send').disabled = true;
+  let offline = false;
+  try {
+    const r = await api('/api/checklist-report', { method: 'POST', body: report });
+    if (!r.ok && r.status !== 429 && r.status < 500) {
+      toast(r.data.error || 'Nie udało się wysłać', false);
+      $('#send').disabled = false;
+      return;
+    }
+    if (!r.ok) offline = true;
+  } catch (e) { offline = true; }
+  $('#send').disabled = false;
+  if (offline) setQueue(queue().filter(x => x.id !== report.id).concat([report]));
+  save(SENT_KEY, [{ id: d.id, name: tpl.name, date: d.date, at: nowTime(),
+                    queued: offline }].concat(load(SENT_KEY, [])).slice(0, 12));
+  dropDraft(d.id);
+  S.draft = null;
+  show('done');
+  $('#title').textContent = tpl.name;
+  $('#done-mark').textContent = offline ? '⏳' : '✅';
+  $('#done-title').textContent = offline ? 'Zapisane offline' : 'Wysłane';
+  $('#done-text').textContent = offline
+    ? 'Wyślemy automatycznie, gdy wróci internet. Nie czyść danych przeglądarki.'
+    : 'Checklista trafiła do menedżera.';
+}
+
+let toastTimer = null;
+function toast(text, good = true) {
+  const box = $('#toast');
+  box.textContent = text;
+  box.classList.toggle('bad', !good);
+  box.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => box.classList.add('hidden'), 2600);
+}
+
+/* ── события ── */
+$('#to-form').href = '/form?t=' + encodeURIComponent(TOKEN);
+$('#back').onclick = () => { clearTimeout(saveTimer); saveDraft(); renderHome(); };
+$('#done-back').onclick = renderHome;
+$('#send').onclick = trySend;
+$('#sheet-no').onclick = closeSheet;
+$('#backdrop').onclick = closeSheet;
+$('#sheet-yes').onclick = send;
+$('#discard').onclick = () => {
+  if (!confirm('Usunąć wersję roboczą? Wpisane wartości przepadną.')) return;
+  clearTimeout(saveTimer);
+  dropDraft(S.draft.id);
+  renderHome();
+};
+let rz = null;
+window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(layout, 120); });
+window.addEventListener('online', () => { paintNet(); flush(false); });
+window.addEventListener('offline', paintNet);
+window.addEventListener('pagehide', () => { if (S.draft) saveDraft(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { if (S.draft) saveDraft(); } else flush();
+});
+setInterval(flush, 30000);
+
+renderHome();
+paintNet();
+loadCatalog();
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>

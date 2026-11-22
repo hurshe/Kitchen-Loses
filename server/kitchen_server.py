@@ -46,13 +46,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("KUCHNIA_PORT") or os.environ.get("PORT") or 8788)
 DB = os.environ.get("KUCHNIA_SERVER_DB") or os.path.join(HERE, "kitchen_queue.db")
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 # 30 дней, а не 3 как у бара: менеджер кухни открывает приложение реже, и
 # зашлушение, исчезнувшее до подтверждения, — это потерянная страта.
 MAX_AGE_DAYS = 30
 MAX_PENDING = 300               # предел очереди НА КУХНЮ — защита от флуда
 MAX_REPORT_BYTES = 64 * 1024
 MAX_LINES = 60
+# Checklisty: заполненный лист несёт снимок шаблона, поэтому он крупнее
+# зашлушения. Каталог шаблонов приезжает от приложения одним куском.
+MAX_CHECKLIST_BYTES = 256 * 1024
+MAX_CHECKLISTS_PENDING = 600
+MAX_TEMPLATES = 100
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_WINDOW_SEC = 300
 NAME_RE = re.compile(r"^[\w \-.'ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]{2,40}$", re.UNICODE)
@@ -62,7 +67,7 @@ WARSAW_TZ = ZoneInfo("Europe/Warsaw")
 app = Flask(__name__)
 # Каталог кухни (~100 позиций) приезжает от приложения одним куском.
 # У зашлушения от повара — свой, куда более жёсткий лимит в submit_report().
-app.config["MAX_CONTENT_LENGTH"] = 512 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.environ.get("KUCHNIA_HTTPS") == "1"
@@ -106,6 +111,11 @@ def db_conn():
         id TEXT PRIMARY KEY,
         tenant_id TEXT NOT NULL,
         name TEXT, shift_date TEXT,
+        created_at TEXT, data_json TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS checklist_reports (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        template_id TEXT, name TEXT, entry_date TEXT,
         created_at TEXT, data_json TEXT)""")
     c.execute("""CREATE TABLE IF NOT EXISTS config (
         tenant_id TEXT NOT NULL,
@@ -181,6 +191,7 @@ def cleanup(c):
     limit = (datetime.now(timezone.utc)
              - timedelta(days=MAX_AGE_DAYS)).isoformat()
     c.execute("DELETE FROM reports WHERE created_at < ?", (limit,))
+    c.execute("DELETE FROM checklist_reports WHERE created_at < ?", (limit,))
 
 
 def _throttled(key) -> bool:
@@ -217,6 +228,27 @@ def form_page():
             mimetype="text/html", status=403)
     path = os.path.join(HERE, "form.html")
     resp = send_file(path, mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+@app.route("/checklists")
+def checklists_page():
+    """Страница заполнения чек-листов — тот же токен, что у формы страт."""
+    c = db_conn()
+    try:
+        tenant = get_tenant_by_token(c, request_token())
+    finally:
+        c.close()
+    if not tenant:
+        return Response(
+            "<meta charset='utf-8'><body style='font:16px system-ui;"
+            "background:#12151c;color:#eef2f8;text-align:center;padding:60px'>"
+            "<h2>Brak dostępu</h2><p>Link jest nieprawidłowy lub wygasł.<br>"
+            "Poproś menedżera o nowy QR-kod.</p></body>",
+            mimetype="text/html", status=403)
+    resp = send_file(os.path.join(HERE, "checklists.html"),
+                     mimetype="text/html")
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
@@ -280,7 +312,7 @@ def manifest():
 # всегда сеть: устаревший каталог хуже, чем честное «brak połączenia».
 # Записи повара при этом не теряются — их держит очередь в localStorage.
 SW_JS = """
-const CACHE = 'kuchnia-form-v1';
+const CACHE = 'kuchnia-form-v2';
 // Оболочку НЕ кладём в кэш при установке: '/form' без токена отдаёт 403,
 // cache.add на этом падает, и в итоге не кэшируется вообще ничего — форма
 // не открылась бы в офлайне. Кэш наполняет обработчик fetch ниже, из
@@ -295,7 +327,8 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
   if (url.origin !== self.location.origin) return;
-  if (!['/form', '/icon.png', '/icon-512.png'].includes(url.pathname)) return;
+  if (!['/form', '/checklists', '/icon.png', '/icon-512.png']
+      .includes(url.pathname)) return;
   e.respondWith(
     fetch(e.request).then(res => {
       if (res && res.ok) {
@@ -459,14 +492,137 @@ def push_catalog(c, tenant):
     return jsonify(ok=True, items=len(data["items"]))
 
 
+# ────────────────────────────── checklisty ──────────────────────────
+# Та же почтовая схема, что у страт: приложение кладёт каталог шаблонов,
+# телефон забирает его и присылает заполненные листы, приложение их
+# вычитывает и удаляет. Сервер содержимое не разбирает — только хранит.
+@app.route("/api/checklists")
+@api_tenant
+def get_checklists(c, tenant):
+    row = c.execute("SELECT value FROM config WHERE tenant_id=?"
+                    " AND key='checklists'", (tenant["id"],)).fetchone()
+    data = json.loads(row["value"]) if row else {"templates": []}
+    data["kitchen"] = data.get("kitchen") or tenant["name"]
+    data["today"] = current_shift_date()
+    data["version"] = VERSION
+    return jsonify(data)
+
+
+@app.route("/api/checklists", methods=["POST"])
+@api_tenant
+def push_checklists(c, tenant):
+    """Приложение выгружает шаблоны — их увидят на телефонах."""
+    payload = request.get_json(silent=True) or {}
+    templates = payload.get("templates")
+    if not isinstance(templates, list):
+        return jsonify(error="brak listy szablonów"), 400
+    if len(templates) > MAX_TEMPLATES:
+        return jsonify(error=f"za dużo szablonów (max {MAX_TEMPLATES})"), 400
+    for t in templates:
+        if (not isinstance(t, dict) or not clean(t.get("id"), 32)
+                or not clean(t.get("name"), 80)
+                or not isinstance(t.get("sections"), list)):
+            return jsonify(error="zły szablon"), 400
+    data = {"templates": templates,
+            "kitchen": clean(payload.get("kitchen"), 60) or tenant["name"],
+            "updated_at": datetime.now(timezone.utc).isoformat(
+                timespec="seconds")}
+    c.execute("INSERT OR REPLACE INTO config VALUES (?,'checklists',?)",
+              (tenant["id"], json.dumps(data, ensure_ascii=False)))
+    c.commit()
+    return jsonify(ok=True, templates=len(templates))
+
+
+@app.route("/api/checklist-report", methods=["POST"])
+@api_tenant
+def submit_checklist(c, tenant):
+    """Приём заполненного чек-листа. Открыто наружу по QR — проверяем
+    размер, обязательные поля и глубину очереди; остальное разберёт
+    приложение (оно же отбросит мусор)."""
+    raw = request.get_data() or b""
+    if len(raw) > MAX_CHECKLIST_BYTES:
+        return jsonify(error="checklista za duża"), 413
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return jsonify(error="zły JSON"), 400
+    if not isinstance(payload, dict):
+        return jsonify(error="zły format"), 400
+
+    name = clean(payload.get("name"), 40)
+    if not NAME_RE.match(name or ""):
+        return jsonify(error="podaj imię (2–40 znaków)"), 400
+    entry_date = clean(payload.get("date"), 10)
+    if not DATE_RE.match(entry_date):
+        return jsonify(error="wybierz datę"), 400
+    template = payload.get("template")
+    if (not isinstance(template, dict) or not clean(template.get("name"), 80)
+            or not isinstance(template.get("sections"), list)):
+        return jsonify(error="brak szablonu"), 400
+    if not isinstance(payload.get("values"), dict):
+        return jsonify(error="brak wartości"), 400
+
+    cleanup(c)
+    pending = c.execute("SELECT COUNT(*) FROM checklist_reports"
+                        " WHERE tenant_id=?", (tenant["id"],)).fetchone()[0]
+    if pending >= MAX_CHECKLISTS_PENDING:
+        return jsonify(error="kolejka pełna — menedżer musi odebrać "
+                             "wcześniejsze checklisty"), 429
+
+    rid = clean(payload.get("id"), 32) or uuid.uuid4().hex[:16]
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    payload.update(id=rid, name=name, date=entry_date, submitted_at=stamp)
+    payload.pop("token", None)
+    c.execute("INSERT OR IGNORE INTO checklist_reports (id, tenant_id,"
+              " template_id, name, entry_date, created_at, data_json)"
+              " VALUES (?,?,?,?,?,?,?)",
+              (rid, tenant["id"], clean(payload.get("template_id"), 32),
+               name, entry_date, stamp,
+               json.dumps(payload, ensure_ascii=False)))
+    c.commit()
+    return jsonify(ok=True, id=rid)
+
+
+@app.route("/api/checklist-reports")
+@api_tenant
+def list_checklist_reports(c, tenant):
+    cleanup(c)
+    c.commit()
+    out = []
+    for r in c.execute("SELECT id, created_at, data_json FROM checklist_reports"
+                       " WHERE tenant_id=? ORDER BY created_at",
+                       (tenant["id"],)).fetchall():
+        try:
+            data = json.loads(r["data_json"])
+        except ValueError:
+            continue
+        data["id"] = r["id"]
+        data["submitted_at"] = r["created_at"]
+        out.append(data)
+    return jsonify(reports=out, count=len(out))
+
+
+@app.route("/api/checklist-reports/<rid>", methods=["DELETE"])
+@api_tenant
+def delete_checklist_report(c, tenant, rid):
+    cur = c.execute("DELETE FROM checklist_reports WHERE id=? AND tenant_id=?",
+                    (rid, tenant["id"]))
+    c.commit()
+    if not cur.rowcount:
+        return jsonify(error="nie ma takiej checklisty"), 404
+    return jsonify(ok=True)
+
+
 @app.route("/api/whoami")
 @api_tenant
 def whoami(c, tenant):
     """Кнопка «Sprawdź połączenie» в настройках приложения."""
     pending = c.execute("SELECT COUNT(*) FROM reports WHERE tenant_id=?",
                         (tenant["id"],)).fetchone()[0]
+    checklists = c.execute("SELECT COUNT(*) FROM checklist_reports"
+                           " WHERE tenant_id=?", (tenant["id"],)).fetchone()[0]
     return jsonify(ok=True, kitchen=tenant["name"], pending=pending,
-                   version=VERSION)
+                   checklists_pending=checklists, version=VERSION)
 
 
 # ────────────────────────────── /admin ──────────────────────────────
@@ -575,6 +731,11 @@ def admin_home():
             cat = c.execute("SELECT value FROM config WHERE tenant_id=?"
                             " AND key='catalog'", (t["id"],)).fetchone()
             n_items = len(json.loads(cat["value"])["items"]) if cat else 0
+            cl = c.execute("SELECT value FROM config WHERE tenant_id=?"
+                           " AND key='checklists'", (t["id"],)).fetchone()
+            n_cl = len(json.loads(cl["value"])["templates"]) if cl else 0
+            cl_link = (request.url_root.rstrip("/")
+                       + url_for("checklists_page") + f"?t={t['token']}")
             link = (request.url_root.rstrip("/") + url_for("form_page")
                     + f"?t={t['token']}")
             cards.append(f"""
@@ -582,12 +743,18 @@ def admin_home():
   <div class="head"><span class="name">{t['name']}</span>
     <span><span class="badge">{n_items} pozycji w katalogu</span>
       <span class="badge">{pending} w kolejce</span>
+      <span class="badge">{n_cl} checklist</span>
       {'' if t['active'] else '<span class="badge">wyłączona</span>'}</span></div>
   <div class="grid"><div>
     <div class="link"><code id="l{t['id']}">{link}</code>
       <button class="btn" onclick="cp('l{t['id']}')">Kopiuj</button></div>
-    <p class="muted small">Link do formularza dla kucharzy. Ten sam token
+    <p class="muted small">Link do formularza strat dla kucharzy (QR obok). Ten sam token
       wpisuje się w aplikacji menedżera: <b>Ustawienia → Serwer</b>.</p>
+    <div class="link"><code id="c{t['id']}">{cl_link}</code>
+      <button class="btn" onclick="cp('c{t['id']}')">Kopiuj</button></div>
+    <p class="muted small">Link do checklist. Z formularza strat prowadzi do
+      nich też przycisk „Checklisty”. <a href="/admin/qr/{t['id']}.svg?p=checklists"
+      target="_blank">QR do checklist</a></p>
     <div class="link"><code>{t['token']}</code></div>
     <form method="post" action="/admin/tenants/{t['id']}/rename" class="inline">
       <input type="text" name="name" value="{t['name']}" required>
@@ -660,6 +827,8 @@ def admin_tenant_action(tid, action):
                 # кухней слишком легко нажимается с телефона
                 if clean(request.form.get("confirm"), 60) == row["name"]:
                     c.execute("DELETE FROM reports WHERE tenant_id=?", (tid,))
+                    c.execute("DELETE FROM checklist_reports WHERE tenant_id=?",
+                              (tid,))
                     c.execute("DELETE FROM config WHERE tenant_id=?", (tid,))
                     c.execute("DELETE FROM tenants WHERE id=?", (tid,))
             c.commit()
@@ -678,7 +847,9 @@ def admin_qr(tid):
         c.close()
     if not row:
         return "", 404
-    link = (request.url_root.rstrip("/") + url_for("form_page")
+    page = ("checklists_page" if request.args.get("p") == "checklists"
+            else "form_page")
+    link = (request.url_root.rstrip("/") + url_for(page)
             + f"?t={row['token']}")
     try:
         import qrcode

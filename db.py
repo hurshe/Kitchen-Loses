@@ -215,6 +215,38 @@ def init_db(path=None):
 
     CREATE TABLE IF NOT EXISTS config (
         key TEXT PRIMARY KEY, value TEXT);
+
+    -- Checklisty (см. checklists.py). Шаблон целиком лежит JSON-ом:
+    -- структура у него древовидная и читается всегда вся разом.
+    CREATE TABLE IF NOT EXISTS checklist_templates (
+        id         TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        period     TEXT,
+        data_json  TEXT NOT NULL,
+        active     INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        version    INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT,
+        updated_at TEXT);
+
+    -- Заполненные копии. data_json несёт снимок шаблона + значения, поэтому
+    -- правка или удаление шаблона старые копии не меняет.
+    CREATE TABLE IF NOT EXISTS checklist_entries (
+        id            TEXT PRIMARY KEY,
+        template_id   TEXT,
+        template_name TEXT,
+        entry_date    TEXT NOT NULL,       -- YYYY-MM-DD, дата чек-листа
+        person        TEXT,
+        submitted_at  TEXT,                -- когда отправили с телефона
+        received_at   TEXT,                -- когда забрало приложение
+        source        TEXT,
+        issues        INTEGER NOT NULL DEFAULT 0,
+        filled        INTEGER NOT NULL DEFAULT 0,
+        total         INTEGER NOT NULL DEFAULT 0,
+        seen          INTEGER NOT NULL DEFAULT 0,
+        data_json     TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_cl_entries_date
+        ON checklist_entries(entry_date);
     """)
     c.commit()
     return c
