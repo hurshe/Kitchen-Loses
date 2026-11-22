@@ -44,11 +44,12 @@ ssh -i ~/.ssh/beercount_do root@46.101.139.239 "mkdir -p /opt/kuchnia && chown d
 
 ## 2. Залить сервер
 
-Едут **три файла** — сервер, форма и иконка. Больше ничего на дроплете не нужно.
+Едут **четыре файла** — сервер, форма страт, страница чек-листов и иконка.
+Больше ничего на дроплете не нужно.
 
 ```bash
 cd "C:\Users\Legion\OneDrive\Робочий стіл\LOSES KITCHEN"
-scp -i ~/.ssh/beercount_do server/kitchen_server.py server/form.html server/icon.png root@46.101.139.239:/opt/kuchnia/
+scp -i ~/.ssh/beercount_do server/kitchen_server.py server/form.html server/checklists.html server/icon.png root@46.101.139.239:/opt/kuchnia/
 ssh -i ~/.ssh/beercount_do root@46.101.139.239 "chown -R deploy:deploy /opt/kuchnia && /opt/kuchnia/venv/bin/python -m py_compile /opt/kuchnia/kitchen_server.py && echo SYNTAX-OK"
 ```
 
@@ -156,12 +157,18 @@ ssh -i ~/.ssh/beercount_do root@46.101.139.239 "sqlite3 /opt/kuchnia/kitchen_que
 ```bash
 cd "C:\Users\Legion\OneDrive\Робочий стіл\LOSES KITCHEN"
 ssh -i ~/.ssh/beercount_do root@46.101.139.239 "cd /opt/kuchnia && cp -a kitchen_server.py kitchen_server.py.bak-$(date +%F)"
-scp -i ~/.ssh/beercount_do server/kitchen_server.py server/form.html root@46.101.139.239:/opt/kuchnia/
+scp -i ~/.ssh/beercount_do server/kitchen_server.py server/form.html server/checklists.html root@46.101.139.239:/opt/kuchnia/
 ssh -i ~/.ssh/beercount_do root@46.101.139.239 "chown -R deploy:deploy /opt/kuchnia && /opt/kuchnia/venv/bin/python -m py_compile /opt/kuchnia/kitchen_server.py && systemctl restart kuchnia && sleep 2 && systemctl is-active kuchnia"
 ```
 
 `py_compile` гоняется, пока старый процесс ещё жив: про кривой синтаксис
 узнаём до рестарта, а не после.
+
+> **Обновление 1.0 → 1.1 (чек-листы).** Нужны оба файла сразу: новый
+> `kitchen_server.py` и `checklists.html`. Таблицу `checklist_reports`
+> сервер создаёт сам при первом запросе; существующая очередь страт и
+> токены не затрагиваются. Лимит nginx `client_max_body_size 1m` менять не
+> нужно — заполненный лист ограничен 256 КБ.
 
 Правил `form.html`? Подними `VERSION` в `kitchen_server.py` — телефоны
 кэшируют форму, и без этого повар увидит старую до очистки кэша.
@@ -186,3 +193,5 @@ ssh -i ~/.ssh/beercount_do root@46.101.139.239 "journalctl -u kuchnia -n 50 --no
 | В приложении «Zły token» | токен из `/admin` не тот, либо кухню пересоздали |
 | «Serwer niedostępny» | нет интернета у ПК менеджера или сервис не поднят |
 | Зашлушения не приходят | у повара «⏳ czeka» — телефон без сети; уедут сами |
+| На `/checklists` «Nie ma jeszcze żadnej checklisty» | в приложении нет активных шаблонов или они не доехали: `Checklisty → Szablony → Wyślij na serwer` |
+| `/checklists` отдаёт 500 | на дроплет не залит `checklists.html` |

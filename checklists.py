@@ -728,6 +728,7 @@ td.off{background:repeating-linear-gradient(135deg,#fff,#fff 4px,#ccc 4px,#ccc 5
 .foot{color:#666;font-size:11px;margin-top:18px;text-align:center}
 .warn{border:2px solid #b91c1c;color:#b91c1c;padding:6px 10px;margin:0 0 12px;
   font-weight:700}
+.noprint{float:right;padding:8px 14px;font:inherit;cursor:pointer}
 @media print{body{margin:10mm}.noprint{display:none}}
 """
 
@@ -744,6 +745,8 @@ def entry_html(entry: dict, kitchen="") -> str:
     out = ["<!doctype html><html lang='pl'><head><meta charset='utf-8'>",
            f"<title>{esc(tpl['name'])} — {esc(entry.get('entry_date') or '')}"
            f"</title><style>{PRINT_CSS}</style></head><body>",
+           "<button class='noprint' onclick='window.print()'>"
+           "Drukuj / zapisz jako PDF</button>",
            f"<h1>{esc(tpl['name'])}</h1>"]
     if tpl.get("description"):
         out.append(f"<div class='desc'>{esc(tpl['description'])}</div>")

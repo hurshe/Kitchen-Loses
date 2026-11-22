@@ -5,10 +5,11 @@
 приложение их забирает, менеджер подтверждает, и страты попадают в журнал.
 Ровно та же схема, что в Beer Count, только без беччек и рецептур.
 
-Четыре раздела:
-    Podsumowanie — сколько чего ушло за месяц (главный ответ приложения)
-    Straty       — журнал: ручной ввод, правка, фильтры
+Разделы:
+    Straty       — сколько чего ушло за месяц + журнал (ручной ввод, правка)
     Zgłoszenia   — очередь с сервера, подтверждение
+    Checklisty   — конструктор чек-листов и архив заполненных копий
+                   (см. ui_checklists.py)
     Ustawienia   — позиции, причины, связь с сервером
 
 Запуск:  python main_kuchnia.py
@@ -22,10 +23,12 @@ from datetime import date, datetime, timedelta
 import flet as ft
 
 import db
+import checklists
 import export_xlsx
 import sync
+import ui_checklists
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 ACCENT = "#D9952E"                       # то же золото, что в Beer Count
 OK_COLOR = "#34D399"
 BAD_COLOR = "#F87171"                    # цвета состояний — как у формы повара
@@ -48,7 +51,7 @@ def data_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
-class KuchniaApp:
+class KuchniaApp(ui_checklists.ChecklistsMixin):
     # ─────────────────────────── старт ───────────────────────────
     def __init__(self, page: ft.Page):
         self.page = page
@@ -73,6 +76,7 @@ class KuchniaApp:
         self.server_ok = False                     # была ли связь удачной
         self.selected = None
         self.nav_items = {}
+        self.cl_init()
 
         page.title = "Straty Kuchnia — HTS"
         page.padding = 0
@@ -150,8 +154,11 @@ class KuchniaApp:
                                       padding=ft.Padding(22, 18, 22, 18))],
                         spacing=0, expand=True))
         self.select("summary")
+        self.cl_paint_badge()
+        checklists.auto_backup(self.c, self.cfg.get("checklist_backup_dir"))
         if self.cfg.get("server_token"):
             page.run_task(self.load_reports)
+        page.run_task(self.cl_auto_loop)
         if self.first_run:
             self.dialog("info", "Witaj!",
                         "Wgraliśmy startowy katalog kuchni — poprawisz go w "
@@ -178,6 +185,7 @@ class KuchniaApp:
         items = [
             ("summary", ft.Icons.INSIGHTS, "Straty"),
             ("reports", ft.Icons.INBOX, "Zgłoszenia"),
+            ("checklists", ft.Icons.FACT_CHECK, "Checklisty"),
             ("settings", ft.Icons.TUNE, "Ustawienia"),
         ]
         nav_col = ft.Column(spacing=4)
@@ -234,6 +242,7 @@ class KuchniaApp:
             tx.color = (ft.Colors.ON_SURFACE if on
                         else ft.Colors.ON_SURFACE_VARIANT)
         builder = {"summary": self.view_summary, "reports": self.view_reports,
+                   "checklists": self.view_checklists,
                    "settings": self.view_settings}[key]
         self.content.content = ft.Container(content=builder(), expand=True)
         self.page.update()
@@ -353,7 +362,8 @@ class KuchniaApp:
         return row
 
     def table(self, headers, rows, widths=None, empty="Brak danych",
-              on_row_click=None, expand=True, on_sort=None, sort_active=None):
+              on_row_click=None, expand=True, on_sort=None, sort_active=None,
+              sort_arrow="▼"):
         """Простая таблица: шапка + прокручиваемые строки.
 
         Своя, а не DataTable: нужен контроль над шириной колонок и
@@ -390,7 +400,7 @@ class KuchniaApp:
             label = h[0] if isinstance(h, tuple) else h
             key = sort_key(h)
             if key and key == sort_active:
-                label = f"{label} ▼"
+                label = f"{label} {sort_arrow}"
             c = cell(label, w, bold=True, color=ACCENT, size=12,
                      right=is_right(h))
             if key and on_sort:
@@ -1451,7 +1461,10 @@ class KuchniaApp:
                     "3. Kucharz skanuje QR z panelu, wpisuje straty i wysyła "
                     "zgłoszenie.\n"
                     "4. Ty odbierasz je w zakładce „Zgłoszenia” i zatwierdzasz "
-                    "— dopiero wtedy trafiają do bazy na tym komputerze.",
+                    "— dopiero wtedy trafiają do bazy na tym komputerze.\n"
+                    "5. Checklisty budujesz w zakładce „Checklisty”. Po "
+                    "zapisaniu same jadą na serwer, a wypełnione kopie "
+                    "wracają do archiwum bez zatwierdzania.",
                     size=14.5)),
         ], spacing=14, expand=True, scroll=ft.ScrollMode.AUTO)
 
@@ -1488,7 +1501,11 @@ class KuchniaApp:
             self.server_ok = False
             self.reports_status = data
         self._paint_badge()
-        if self.selected == "reports" or manual:
+        # тем же заходом — заполненные чек-листы: у них та же почтовая схема
+        new_lists = await self.cl_fetch()
+        if self.selected == "reports" or manual or (
+                new_lists and self.selected == "checklists"
+                and self.cl_edit is None):
             self.refresh()
         else:
             self.page.update()
