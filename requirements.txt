@@ -2,6 +2,7 @@
 flet>=0.85          # окно и весь интерфейс
 openpyxl>=3.1       # выгрузка Excel
 httpx>=0.27         # связь с сервером зашлушений
+tzdata              # часовой пояс Europe/Warsaw: на Windows без него db.py не стартует
 pillow>=10.0        # только для gen_icons.py, в сборку не входит
 pyinstaller>=6.0    # сборка .exe
 

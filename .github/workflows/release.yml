@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install "flet==0.85.3" "flet-desktop==0.85.3" "httpx==0.28.1" "openpyxl==3.1.5" "pyinstaller==6.21.0" "Flask>=3.0"
+          pip install "flet==0.85.3" "flet-desktop==0.85.3" "httpx==0.28.1" "openpyxl==3.1.5" "pyinstaller==6.21.0" "tzdata" "Flask>=3.0"
 
       # Версия из тега обязана совпадать с APP_VERSION в main_kuchnia.py:
       # иначе программа после установки снова увидит «новую» версию и будет
@@ -54,13 +54,13 @@ jobs:
 
       # Красный тест = нет релиза
       - name: Tests
+        shell: pwsh
         run: |
-          python check_db.py
-          python check_server.py
-          python check_ui.py
-          python check_e2e.py
-          python check_checklists.py
-          python check_updater.py
+          foreach ($t in "check_db", "check_server", "check_ui", "check_e2e", "check_checklists", "check_updater") {
+            Write-Host "=== $t"
+            python "$t.py"
+            if ($LASTEXITCODE -ne 0) { Write-Error "$t nie przeszedł"; exit 1 }
+          }
 
       - name: Build exe (PyInstaller)
         run: pyinstaller --noconfirm StratyKuchnia.spec
