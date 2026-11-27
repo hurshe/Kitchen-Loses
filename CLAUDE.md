@@ -9,5 +9,8 @@
 Проверки (временные базы подставляются сами):
 
 ```
-python check_db.py && python check_server.py && python check_ui.py && python check_e2e.py && python check_checklists.py
+python check_db.py && python check_server.py && python check_ui.py && python check_e2e.py && python check_checklists.py && python check_updater.py
 ```
+
+Выпуск новой версии программы менеджера — тегом `vX.Y.Z` (совпадает с
+`APP_VERSION`), см. «Выпуск обновления» в `README.md`.

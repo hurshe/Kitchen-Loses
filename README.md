@@ -62,6 +62,8 @@
 | `check_db.py`, `check_server.py`, `check_ui.py`, `check_e2e.py` | Автопроверки страт (90 + 63 + 70 + 29) |
 | `check_checklists.py` | Автопроверки чек-листов: модель, сервер, сквозной путь, интерфейс (152) |
 | `StratyKuchnia.spec`, `setup.iss` | Сборка `.exe` и установщика |
+| `updater.py`, `check_updater.py` | Автообновление программы менеджера и его проверки (45) |
+| `.github/workflows/release.yml` | Тег `vX.Y.Z` → проверки → установщик → GitHub Release |
 | `DEPLOY.md` | Установка сервера на дроплет рядом с Beer Count |
 
 ---
@@ -96,7 +98,41 @@ pyinstaller StratyKuchnia.spec
 > скопируй базу в сторону. У клиента такой беды нет: установщик кладёт
 > программу в `C:\StratyKuchnia` и исключает `kuchnia.db` из перезаписи.
 
-Потом `setup.iss` в Inno Setup Compiler → `Output\StratyKuchnia-Setup-1.0.0.exe`.
+Потом `setup.iss` в Inno Setup Compiler → `Output\StratyKuchnia-Setup-X.Y.Z.exe`.
+
+### Выпуск обновления (как в Beer Count)
+
+Вручную собирать ничего не нужно — это делает GitHub:
+
+1. Поднять `APP_VERSION` в `main_kuchnia.py` (например, `1.2.0`), закоммитить
+   и запушить в `main`. Сам по себе push в `main` ничего не выпускает.
+2. Поставить тег с той же версией и запушить его:
+   ```powershell
+   git tag v1.2.0
+   ```
+   ```powershell
+   git push origin v1.2.0
+   ```
+3. GitHub Actions (`release.yml`) гоняет все проверки, собирает exe и
+   установщик и публикует Release `Straty Kuchnia 1.2.0` с
+   `StratyKuchnia-Setup-1.2.0.exe` и `SHA256SUMS.txt`. Красный тест или
+   тег, не совпадающий с `APP_VERSION`, — релиза нет.
+4. У менеджера при следующем запуске программы в боковой панели
+   появляется «Aktualizacja 1.2.0». Клик → установщик скачивается,
+   сверяется по SHA256 и ставится тихо; программа закрывается и через
+   несколько секунд запускается сама. `kuchnia.db` установщик не трогает.
+   Проверить вручную — `Ustawienia → O programie → Sprawdź aktualizacje`.
+
+Тег с дефисом (`v1.2.0-rc.1`) даёт пробный релиз: программа его не видит.
+`Run workflow` на вкладке Actions — пробная сборка без релиза, установщик
+лежит в Artifacts.
+
+> Версия **1.0.0 обновляться не умеет** — проверка появилась в 1.1.0.
+> На компьютер менеджера первый раз установщик ставится руками,
+> дальше — сам.
+
+> Сервер (форма и чек-листы на дроплете) так не обновляется — его
+> выкладка по-прежнему по `DEPLOY.md`.
 
 ---
 
@@ -273,6 +309,9 @@ python check_e2e.py
 ```
 ```powershell
 python check_checklists.py
+```
+```powershell
+python check_updater.py
 ```
 
 Все гоняются на временных базах (`KUCHNIA_DB` / `KUCHNIA_SERVER_DB`

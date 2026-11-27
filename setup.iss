@@ -8,6 +8,10 @@
 #endif
 #define MyAppPublisher "HTS — Hurshee Technology Solutions"
 #define MyAppExeName "StratyKuchnia.exe"
+; откуда брать собранную программу; CI и пробные сборки могут подменить
+#ifndef SourceDir
+  #define SourceDir "dist\StratyKuchnia"
+#endif
 
 [Setup]
 AppId={{4C1E7A93-8D62-4B17-9E30-2F5A6C81D7B2}
@@ -40,7 +44,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; с собой). Без этого исключения ignoreversion затёр бы базу клиента
 ; случайным состоянием с машины разработчика. В Beer Count это уже
 ; стоило порчи данных — повторять не будем.
-Source: "dist\StratyKuchnia\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "kuchnia.db,kuchnia.db-journal,kuchnia.db-wal,kuchnia.db-shm"
+Source: "{#SourceDir}\*";DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "kuchnia.db,kuchnia.db-journal,kuchnia.db-wal,kuchnia.db-shm"
 
 [InstallDelete]
 ; свежий _internal при каждом обновлении — старые библиотеки не мешаются
@@ -52,6 +56,8 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Flags: nowait postinstall skipifsilent
+; тихое обновление из программы (/VERYSILENT): программа должна встать сама
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait; Check: WizardSilent
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);

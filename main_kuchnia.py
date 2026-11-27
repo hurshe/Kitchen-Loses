@@ -16,6 +16,7 @@
 """
 
 import os
+import subprocess
 import sys
 import traceback
 from datetime import date, datetime, timedelta
@@ -27,6 +28,7 @@ import checklists
 import export_xlsx
 import sync
 import ui_checklists
+import updater
 
 APP_VERSION = "1.1.0"
 ACCENT = "#D9952E"                       # то же золото, что в Beer Count
@@ -159,6 +161,8 @@ class KuchniaApp(ui_checklists.ChecklistsMixin):
         if self.cfg.get("server_token"):
             page.run_task(self.load_reports)
         page.run_task(self.cl_auto_loop)
+        if getattr(sys, "frozen", False):    # из исходников не обновляемся
+            page.run_task(self.check_updates)
         if self.first_run:
             self.dialog("info", "Witaj!",
                         "Wgraliśmy startowy katalog kuchni — poprawisz go w "
@@ -218,6 +222,18 @@ class KuchniaApp(ui_checklists.ChecklistsMixin):
             padding=ft.Padding(14, 11, 14, 11), border_radius=12, ink=True,
             on_click=self.toggle_theme)
 
+        self._update = None
+        self.update_label = ft.Text("Aktualizacja", size=15,
+                                    weight=ft.FontWeight.W_700, color=ACCENT)
+        self.update_btn = ft.Container(
+            visible=False,
+            content=ft.Row([ft.Icon(ft.Icons.SYSTEM_UPDATE_ALT, size=20,
+                                    color=ACCENT), self.update_label],
+                           spacing=12),
+            padding=ft.Padding(14, 11, 14, 11), border_radius=12, ink=True,
+            border=ft.Border.all(1, ACCENT),
+            on_click=self.start_update)
+
         return ft.Container(
             width=232, bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
             border=ft.Border(right=ft.BorderSide(1, ft.Colors.OUTLINE_VARIANT)),
@@ -225,6 +241,8 @@ class KuchniaApp(ui_checklists.ChecklistsMixin):
                 logo,
                 ft.Container(content=nav_col, padding=ft.Padding(10, 0, 10, 0),
                              expand=True),
+                ft.Container(content=self.update_btn,
+                             padding=ft.Padding(10, 0, 10, 6)),
                 ft.Container(content=theme_btn, padding=ft.Padding(10, 0, 10, 4)),
                 ft.Container(
                     content=ft.Text(f"Powered by HTS  •  v{APP_VERSION}",
@@ -1483,8 +1501,77 @@ class KuchniaApp(ui_checklists.ChecklistsMixin):
                                       icon=ft.Icons.BACKUP,
                                       on_click=lambda e: self.page.run_task(
                                           self.backup_db)),
-                ], spacing=10),
+                    ft.OutlinedButton("Sprawdź aktualizacje",
+                                      icon=ft.Icons.SYSTEM_UPDATE_ALT,
+                                      on_click=lambda e: self.page.run_task(
+                                          self.check_updates, True)),
+                ], spacing=10, wrap=True),
             ], spacing=10))
+
+    # ═══════════════════════ обновление программы ═══════════════════════
+    async def check_updates(self, manual=False):
+        """Тихо спросить GitHub о новой версии (см. updater.py)."""
+        upd = await updater.check_latest(APP_VERSION)
+        if upd:
+            self._update = upd
+            self.update_label.value = f"Aktualizacja {upd['version']}"
+            self.update_btn.visible = True
+            self.page.update()
+            if manual:
+                self.start_update()
+        elif manual:
+            self.toast(f"Masz najnowszą wersję ({APP_VERSION}).")
+
+    def start_update(self, e=None):
+        upd = self._update
+        if not upd:
+            return
+        if not getattr(sys, "frozen", False):
+            self.dialog("info", "Aktualizacja",
+                        f"Dostępna wersja {upd['version']}, ale program "
+                        "działa ze źródeł — aktualizacja działa tylko w "
+                        "zainstalowanym programie.")
+            return
+
+        def go():
+            self._upd_bar = ft.ProgressBar(value=0, width=340, color=ACCENT)
+            self._upd_txt = ft.Text("Pobieranie aktualizacji…", size=14)
+            self.page.show_dialog(ft.AlertDialog(
+                modal=True,
+                icon=ft.Icon(ft.Icons.SYSTEM_UPDATE_ALT, color=ACCENT,
+                             size=32),
+                title=ft.Text("Aktualizacja", weight=ft.FontWeight.W_700,
+                              size=16, text_align=ft.TextAlign.CENTER),
+                content=ft.Column([self._upd_txt, self._upd_bar],
+                                  tight=True, spacing=14),
+                shape=ft.RoundedRectangleBorder(radius=18)))
+            self.page.run_task(self._download_and_install)
+
+        self.confirm(
+            "Aktualizacja",
+            f"Pobrać i zainstalować wersję {upd['version']}?\n"
+            "Program zamknie się na chwilę i uruchomi ponownie sam. "
+            "Dane zostają na miejscu.", go, yes_text="Aktualizuj")
+
+    async def _download_and_install(self):
+        def progress(done, total):
+            if total:
+                self._upd_bar.value = done / total
+                self._upd_txt.value = (f"Pobieranie… {done // 1048576} / "
+                                       f"{total // 1048576} MB")
+                self.page.update()
+        try:
+            path = await updater.download(self._update, progress)
+            self._upd_txt.value = ("Instalowanie… program uruchomi się "
+                                   "ponownie.")
+            self._upd_bar.value = None
+            self.page.update()
+            subprocess.Popen(updater.install_command(path))
+            await self.page.window.destroy()
+        except Exception as ex:
+            self.page.pop_dialog()
+            self.dialog("error", "Aktualizacja",
+                        f"Nie udało się pobrać aktualizacji:\n{ex}")
 
     # ═══════════════════════ сеть и файлы ═══════════════════════
     async def load_reports(self, manual=False):
