@@ -115,6 +115,7 @@ class ChecklistsMixin:
             self.kpi("kopii w okresie", stats["entries"]),
             self.kpi("z odchyleniami", stats["with_issues"],
                      color=BAD_COLOR if stats["with_issues"] else None),
+            self.kpi("anulowanych", stats["voided"]),
             self.kpi("nowych (nieotwartych)", stats["unseen"],
                      color=ACCENT if stats["unseen"] else None),
         ], spacing=12)
@@ -159,12 +160,23 @@ class ChecklistsMixin:
         rows = []
         for e in entries:
             fresh = not e["seen"]
+            void = bool(e.get("voided_at"))
             rows.append((
                 ft.Row([
                     ft.Container(width=8, height=8, border_radius=4,
                                  bgcolor=ACCENT if fresh else None),
                     ft.Text(e["entry_date"], size=14.5,
-                            weight=ft.FontWeight.W_700 if fresh else None),
+                            weight=ft.FontWeight.W_700 if fresh else None,
+                            color=ft.Colors.ON_SURFACE_VARIANT if void
+                            else None),
+                    ft.Container(
+                        visible=void, border_radius=6,
+                        border=ft.Border.all(1, BAD_COLOR),
+                        padding=ft.Padding(5, 0, 5, 0),
+                        tooltip=f"Powód: {e.get('void_reason') or '—'}",
+                        content=ft.Text("anulowana", size=11.5,
+                                        color=BAD_COLOR,
+                                        weight=ft.FontWeight.W_700)),
                 ], spacing=8),
                 e["template_name"] or "—",
                 e["person"] or "—",
@@ -179,9 +191,10 @@ class ChecklistsMixin:
                                   tooltip="Drukuj / zapisz jako PDF",
                                   on_click=lambda ev, x=e: self.cl_print(
                                       x["id"])),
-                    ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_size=16,
-                                  tooltip="Usuń kopię", icon_color=BAD_COLOR,
-                                  on_click=lambda ev, x=e: self.cl_delete_entry(
+                    ft.IconButton(ft.Icons.BLOCK, icon_size=16,
+                                  tooltip="Anuluj kopię", icon_color=BAD_COLOR,
+                                  visible=not void,
+                                  on_click=lambda ev, x=e: self.cl_void_entry(
                                       x)),
                 ], spacing=0)))
 
@@ -223,15 +236,54 @@ class ChecklistsMixin:
         self.cl_paint_badge()
         self.refresh()
 
-    def cl_delete_entry(self, e):
-        self.confirm(
-            "Usunąć kopię?",
-            f"{e['template_name']} · {e['entry_date']} · "
-            f"{e['person'] or '—'}\n\nTej operacji nie da się cofnąć "
-            "(chyba że masz kopię zapasową).",
-            lambda: (cl.delete_entry(self.c, e["id"]), self.cl_paint_badge(),
-                     self.refresh(), self.toast("Kopia usunięta")),
-            yes_text="Usuń")
+    def cl_void_entry(self, e):
+        """Аннулирование вместо удаления: копия остаётся в архиве и в печати
+        с пометкой и причиной. Удалять и править заполненные листы нельзя —
+        иначе их можно было бы подделать (см. db._protect_checklist_entries)."""
+        name = e.get("template_name") or e["template"]["name"]
+        reason = ft.TextField(
+            label="Powód anulowania", autofocus=True, multiline=True,
+            min_lines=2, max_length=300,
+            hint_text="np. wypełniona dla złej daty, zdublowana kopia")
+        err = ft.Text("", size=13, color=BAD_COLOR, visible=False)
+
+        def do(ev=None):
+            try:
+                cl.void_entry(self.c, e["id"], reason.value)
+            except ValueError as ex:
+                msg = str(ex)
+                err.value, err.visible = msg[:1].upper() + msg[1:], True
+                self.page.update()
+                return
+            self.page.pop_dialog()
+            self.cl_paint_badge()
+            self.refresh()
+            self.toast("Kopia anulowana — zostaje w archiwum")
+
+        self.cl_void_reason, self.cl_void_do = reason, do   # для автопроверок
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Anulować kopię?", weight=ft.FontWeight.W_800,
+                          size=17),
+            content=ft.Column([
+                ft.Text(f"{name} · {e['entry_date']} · {e['person'] or '—'}",
+                        size=14.5, weight=ft.FontWeight.W_600),
+                ft.Text("Wypełnionej checklisty nie da się usunąć ani "
+                        "zmienić. Anulowana zostaje w archiwum i na wydruku "
+                        "z napisem ANULOWANA i powodem. Tego nie da się "
+                        "cofnąć.", size=13.5,
+                        color=ft.Colors.ON_SURFACE_VARIANT),
+                reason, err,
+            ], tight=True, spacing=12, width=440),
+            actions=[
+                ft.TextButton("Wróć",
+                              on_click=lambda ev: self.page.pop_dialog()),
+                ft.FilledButton("Anuluj kopię", icon=ft.Icons.BLOCK,
+                                style=ft.ButtonStyle(bgcolor=BAD_COLOR,
+                                                     color="#FFFFFF"),
+                                on_click=do),
+            ],
+            shape=ft.RoundedRectangleBorder(radius=18)))
 
     # ─── превью: одна и та же сетка для копии и для пустого шаблона ───
     def _cl_grid(self, s, values, bad):
@@ -382,6 +434,8 @@ class ChecklistsMixin:
             self.cl_paint_badge()
             self.refresh()
         sent = (entry.get("submitted_at") or "")[:16].replace("T", " ")
+        void = bool(entry.get("voided_at"))
+        voided = (entry.get("voided_at") or "")[:16].replace("T", " ")
         dlg = ft.AlertDialog(
             title=ft.Column([
                 ft.Text(entry["template"]["name"], size=17,
@@ -390,11 +444,18 @@ class ChecklistsMixin:
                         f"wysłano {sent or '—'} UTC · wersja szablonu "
                         f"{entry['template'].get('version', 1)}",
                         size=12.5, color=ft.Colors.ON_SURFACE_VARIANT),
+                ft.Text(f"ANULOWANA {voided} UTC · powód: "
+                        f"{entry.get('void_reason') or '—'}",
+                        size=13.5, color=BAD_COLOR,
+                        weight=ft.FontWeight.W_700, visible=void),
             ], spacing=2, tight=True),
             content=self._cl_sheet(entry),
             actions=[
-                ft.TextButton("Usuń", on_click=lambda e: (
-                    self.page.pop_dialog(), self.cl_delete_entry(entry))),
+                ft.TextButton("Anuluj kopię", visible=not void,
+                              style=ft.ButtonStyle(color=BAD_COLOR),
+                              on_click=lambda e: (
+                                  self.page.pop_dialog(),
+                                  self.cl_void_entry(entry))),
                 ft.OutlinedButton("Zapisz jako plik HTML",
                                   icon=ft.Icons.FILE_DOWNLOAD,
                                   on_click=lambda e: self.page.run_task(

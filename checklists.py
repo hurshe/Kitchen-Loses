@@ -539,7 +539,8 @@ def list_entries(c, template_name=None, month=None, date_from=None,
     lo, hi = (db.month_bounds(month) if month
               else (date_from or "0000-01-01", date_to or "9999-12-31"))
     sql = ("SELECT id, template_id, template_name, entry_date, person,"
-           " submitted_at, received_at, source, issues, filled, total, seen"
+           " submitted_at, received_at, source, issues, filled, total, seen,"
+           " voided_at, void_reason"
            " FROM checklist_entries WHERE entry_date BETWEEN ? AND ?")
     args = [lo, hi]
     if template_name:
@@ -565,8 +566,24 @@ def get_entry(c, eid):
     return _entry_row(row, full=True) if row else None
 
 
-def delete_entry(c, eid) -> bool:
-    cur = c.execute("DELETE FROM checklist_entries WHERE id=?", (eid,))
+VOID_REASON_MIN = 5
+
+
+def void_entry(c, eid, reason, when=None) -> bool:
+    """Аннулировать копию: она остаётся в архиве с пометкой и причиной.
+
+    Удалять и править заполненные чек-листы нельзя (триггеры в db.py) —
+    иначе их можно было бы подделать. Аннулирование окончательное.
+    Возвращает False, если копии нет или она уже аннулирована.
+    """
+    reason = " ".join(str(reason or "").split())
+    if len(reason) < VOID_REASON_MIN:
+        raise ValueError("podaj powód anulowania (co najmniej "
+                         f"{VOID_REASON_MIN} znaków)")
+    cur = c.execute(
+        "UPDATE checklist_entries SET voided_at=?, void_reason=?"
+        " WHERE id=? AND voided_at IS NULL",
+        (when or db.now_utc(), reason[:300], eid))
     c.commit()
     return cur.rowcount > 0
 
@@ -599,11 +616,14 @@ def entry_template_names(c) -> list:
 def archive_stats(c, month=None) -> dict:
     lo, hi = db.month_bounds(month) if month else ("0000-01-01", "9999-12-31")
     row = c.execute(
-        "SELECT COUNT(*) AS n, COALESCE(SUM(issues>0),0) AS bad,"
-        " COALESCE(SUM(seen=0),0) AS fresh FROM checklist_entries"
+        "SELECT COUNT(*) AS n,"
+        " COALESCE(SUM(issues>0 AND voided_at IS NULL),0) AS bad,"
+        " COALESCE(SUM(seen=0),0) AS fresh,"
+        " COALESCE(SUM(voided_at IS NOT NULL),0) AS voided"
+        " FROM checklist_entries"
         " WHERE entry_date BETWEEN ? AND ?", (lo, hi)).fetchone()
     return {"entries": row["n"], "with_issues": row["bad"],
-            "unseen": row["fresh"]}
+            "unseen": row["fresh"], "voided": row["voided"]}
 
 
 # ────────────────────────────── kopia zapasowa ──────────────────────
@@ -665,6 +685,15 @@ def import_backup(c, path) -> dict:
             _id, new = import_entry(c, payload, source=e.get("source") or "qr",
                                     received_at=e.get("received_at"), seen=1)
             added_e += 1 if new else 0
+            # аннулирование тоже часть истории: восстановление из копии не
+            # должно «оживлять» аннулированный лист
+            if e.get("voided_at"):
+                try:
+                    void_entry(c, _id, e.get("void_reason") or "anulowana",
+                               when=e["voided_at"])
+                except ValueError:
+                    void_entry(c, _id, "anulowana (z kopii)",
+                               when=e["voided_at"])
         except (ValueError, TypeError, AttributeError):
             skipped += 1
     return {"templates": added_t, "entries": added_e, "skipped": skipped}
@@ -674,9 +703,10 @@ def backup_signature(c) -> str:
     """Отпечаток данных: изменился — пора делать новую автокопию."""
     t = c.execute("SELECT COUNT(*), COALESCE(MAX(updated_at),'')"
                   " FROM checklist_templates").fetchone()
-    e = c.execute("SELECT COUNT(*), COALESCE(MAX(received_at),'')"
+    e = c.execute("SELECT COUNT(*), COALESCE(MAX(received_at),''),"
+                  " COALESCE(SUM(voided_at IS NOT NULL),0)"
                   " FROM checklist_entries").fetchone()
-    return f"{t[0]}:{t[1]}:{e[0]}:{e[1]}"
+    return f"{t[0]}:{t[1]}:{e[0]}:{e[1]}:{e[2]}"
 
 
 def auto_backup(c, folder, today=None) -> str:
@@ -728,6 +758,8 @@ td.off{background:repeating-linear-gradient(135deg,#fff,#fff 4px,#ccc 4px,#ccc 5
 .foot{color:#666;font-size:11px;margin-top:18px;text-align:center}
 .warn{border:2px solid #b91c1c;color:#b91c1c;padding:6px 10px;margin:0 0 12px;
   font-weight:700}
+.void{border:3px solid #111;padding:8px 10px;margin:4px 0 12px;
+  font-weight:800;font-size:15px;text-align:center;letter-spacing:.5px}
 .noprint{float:right;padding:8px 14px;font:inherit;cursor:pointer}
 @media print{body{margin:10mm}.noprint{display:none}}
 """
@@ -748,6 +780,10 @@ def entry_html(entry: dict, kitchen="") -> str:
            "<button class='noprint' onclick='window.print()'>"
            "Drukuj / zapisz jako PDF</button>",
            f"<h1>{esc(tpl['name'])}</h1>"]
+    if entry.get("voided_at"):
+        out.append("<div class='void'>ANULOWANA "
+                   f"{esc(entry['voided_at'][:16].replace('T', ' '))} UTC"
+                   f" · powód: {esc(entry.get('void_reason') or '—')}</div>")
     if tpl.get("description"):
         out.append(f"<div class='desc'>{esc(tpl['description'])}</div>")
     meta = [("Data", entry.get("entry_date") or ""),

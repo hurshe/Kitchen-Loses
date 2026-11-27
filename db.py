@@ -160,6 +160,58 @@ def connect(path=None):
     return c
 
 
+def _protect_checklist_entries(c):
+    """Заполненный чек-лист — документ: его нельзя ни править, ни удалять.
+
+    Иначе менеджер мог бы задним числом «исправить» температуру или убрать
+    неудобный лист и заполнить новый. Ошибочную копию можно только
+    АННУЛИРОВАТЬ с причиной (voided_at / void_reason) — она остаётся в
+    архиве и в печати. Аннулирование окончательное.
+
+    Защита стоит в самой базе (триггеры), а не только в интерфейсе: никакой
+    код программы, включая будущий, не обойдёт её случайно.
+    """
+    cols = {r[1] for r in c.execute("PRAGMA table_info(checklist_entries)")}
+    if "voided_at" not in cols:
+        c.execute("ALTER TABLE checklist_entries ADD COLUMN voided_at TEXT")
+    if "void_reason" not in cols:
+        c.execute("ALTER TABLE checklist_entries ADD COLUMN void_reason TEXT")
+    c.executescript("""
+    CREATE TRIGGER IF NOT EXISTS cl_entries_no_delete
+    BEFORE DELETE ON checklist_entries
+    BEGIN
+        SELECT RAISE(ABORT, 'checklist: kopii nie można usuwać, tylko anulować');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS cl_entries_no_edit
+    BEFORE UPDATE ON checklist_entries
+    WHEN NEW.id IS NOT OLD.id
+      OR NEW.template_id IS NOT OLD.template_id
+      OR NEW.template_name IS NOT OLD.template_name
+      OR NEW.entry_date IS NOT OLD.entry_date
+      OR NEW.person IS NOT OLD.person
+      OR NEW.submitted_at IS NOT OLD.submitted_at
+      OR NEW.received_at IS NOT OLD.received_at
+      OR NEW.source IS NOT OLD.source
+      OR NEW.issues IS NOT OLD.issues
+      OR NEW.filled IS NOT OLD.filled
+      OR NEW.total IS NOT OLD.total
+      OR NEW.data_json IS NOT OLD.data_json
+    BEGIN
+        SELECT RAISE(ABORT, 'checklist: wypełnionej kopii nie można zmieniać');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS cl_entries_void_final
+    BEFORE UPDATE ON checklist_entries
+    WHEN OLD.voided_at IS NOT NULL
+     AND (NEW.voided_at IS NOT OLD.voided_at
+          OR NEW.void_reason IS NOT OLD.void_reason)
+    BEGIN
+        SELECT RAISE(ABORT, 'checklist: anulowania nie można cofnąć');
+    END;
+    """)
+
+
 def init_db(path=None):
     """Создаёт таблицы. Безопасно вызывать на каждом старте."""
     c = connect(path)
@@ -248,6 +300,7 @@ def init_db(path=None):
     CREATE INDEX IF NOT EXISTS idx_cl_entries_date
         ON checklist_entries(entry_date);
     """)
+    _protect_checklist_entries(c)
     c.commit()
     return c
 

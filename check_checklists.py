@@ -239,7 +239,8 @@ ok(cl.entry_months(c) == ["2026-09", "2026-08"], "miesiące z kopiami")
 ok(cl.unseen_count(c) == 3, "trzy nieotwarte")
 cl.mark_seen(c, "e1")
 ok(cl.unseen_count(c) == 2 and cl.archive_stats(c, "2026-08") ==
-   {"entries": 2, "with_issues": 1, "unseen": 1}, "statystyki archiwum")
+   {"entries": 2, "with_issues": 1, "unseen": 1, "voided": 0},
+   "statystyki archiwum")
 
 section("kopia nie zależy od szablonu")
 edited = cl.get_template(c, tid)
@@ -297,9 +298,115 @@ ok(cl.auto_backup(c, bdir, today="2026-08-14") != "", "po zmianie — nowa kopia
 ok(cl.auto_backup(c, "") == "", "bez folderu — wyłączone")
 for n in range(40):
     open(os.path.join(bdir, f"checklisty-2025-01-{n:02d}.zip"), "w").close()
-cl.delete_entry(c, "e9")
+cl.void_entry(c, "e9", "test przycinania kopii")
 cl.auto_backup(c, bdir, today="2026-08-15")
 ok(len(os.listdir(bdir)) == cl.BACKUP_KEEP, "stare kopie są przycinane")
+
+section("nie da się podrobić: brak usuwania i edycji")
+import sqlite3 as _sq                                    # noqa: E402
+cl.import_entry(c, entry("f1", "2026-08-16", values={"s|b|t": "-30"}))
+
+
+def blocked(sql, args=()):
+    try:
+        c.execute(sql, args)
+        c.commit()
+        return False
+    except _sq.DatabaseError:
+        c.rollback()
+        return True
+
+ok(not hasattr(cl, "delete_entry"), "w kodzie nie ma już usuwania kopii")
+ok(blocked("DELETE FROM checklist_entries WHERE id='f1'"),
+   "baza nie pozwala usunąć kopii")
+ok(blocked("DELETE FROM checklist_entries"), "ani wszystkich naraz")
+ok(blocked("UPDATE checklist_entries SET data_json='{}' WHERE id='f1'"),
+   "ani zmienić wartości")
+ok(blocked("UPDATE checklist_entries SET entry_date='2026-08-01' WHERE id='f1'"),
+   "ani przestawić daty")
+ok(blocked("UPDATE checklist_entries SET person='Ktoś' WHERE id='f1'"),
+   "ani podmienić osoby")
+ok(blocked("UPDATE checklist_entries SET issues=5 WHERE id='f1'"),
+   "ani zmienić liczby odchyleń")
+ok(cl.get_entry(c, "f1")["values"] == {"s|b|t": "-30"}, "kopia nietknięta")
+cl.mark_seen(c, "f1")
+ok(cl.get_entry(c, "f1")["seen"] == 1, "oznaczenie „przeczytane” dalej działa")
+before = cl.import_entry(c, entry("f1", "2026-08-01", values={"s|b|t": "-1"}))
+ok(before == ("f1", False) and cl.get_entry(c, "f1")["entry_date"] == "2026-08-16",
+   "ponowne wysłanie z tym samym id nie nadpisuje kopii")
+
+section("anulowanie")
+ok(raises(cl.void_entry, c, "f1", ""), "bez powodu — nie")
+ok(raises(cl.void_entry, c, "f1", "  ab "), "za krótki powód — nie")
+ok(cl.void_entry(c, "f1", "  zła   data\n na liście ") is True, "anulowana")
+fe = cl.get_entry(c, "f1")
+ok(fe["voided_at"] and fe["void_reason"] == "zła data na liście",
+   "data i powód zapisane")
+ok(fe["values"] == {"s|b|t": "-30"}, "treść została")
+ok(cl.void_entry(c, "f1", "drugi raz inny powód") is False,
+   "drugi raz — nic się nie zmienia")
+ok(cl.get_entry(c, "f1")["void_reason"] == "zła data na liście",
+   "powodu nie da się podmienić")
+ok(blocked("UPDATE checklist_entries SET voided_at=NULL WHERE id='f1'"),
+   "anulowania nie da się cofnąć")
+ok(cl.void_entry(c, "brak", "nie ma takiej") is False, "nieistniejąca — False")
+row = [r for r in cl.list_entries(c, month="2026-08") if r["id"] == "f1"][0]
+ok(row["voided_at"] and row["void_reason"], "archiwum widzi anulowanie")
+st = cl.archive_stats(c, "2026-08")
+ok(st["voided"] >= 1, "licznik anulowanych")
+ok(st["with_issues"] == len([r for r in cl.list_entries(c, month="2026-08")
+                             if r["issues"] and not r["voided_at"]]),
+   "anulowane nie liczą się do odchyleń")
+vh = cl.entry_html(cl.get_entry(c, "f1"))
+ok("ANULOWANA" in vh and "zła data na liście" in vh, "wydruk z napisem ANULOWANA")
+ok("ANULOWANA" not in cl.entry_html(cl.get_entry(c, "e1")),
+   "zwykła kopia bez napisu")
+sig = cl.backup_signature(c)
+cl.import_entry(c, entry("f2", "2026-08-16"))
+sig2 = cl.backup_signature(c)
+cl.void_entry(c, "f2", "test kopii automatycznej")
+ok(cl.backup_signature(c) != sig2 != sig, "anulowanie wywołuje nową autokopię")
+
+section("anulowanie przeżywa kopię zapasową")
+zv = os.path.join(TMP, "void.zip")
+cl.export_backup(c, zv)
+c3 = db.connect(os.path.join(TMP, "void-restore.db"))
+db.init_db(os.path.join(TMP, "void-restore.db"))
+c3 = db.connect(os.path.join(TMP, "void-restore.db"))
+cl.import_backup(c3, zv)
+r3 = cl.get_entry(c3, "f1")
+ok(r3 and r3["voided_at"] == fe["voided_at"]
+   and r3["void_reason"] == "zła data na liście",
+   "po przywróceniu nadal anulowana, z tą samą datą i powodem")
+c3.close()
+
+# миграция: старая база без колонок и триггеров
+section("stara baza 1.1.0 dostaje ochronę")
+old = os.path.join(TMP, "old.db")
+oc = _sq.connect(old)
+oc.executescript("""CREATE TABLE checklist_entries (id TEXT PRIMARY KEY,
+  template_id TEXT, template_name TEXT, entry_date TEXT NOT NULL, person TEXT,
+  submitted_at TEXT, received_at TEXT, source TEXT,
+  issues INTEGER NOT NULL DEFAULT 0, filled INTEGER NOT NULL DEFAULT 0,
+  total INTEGER NOT NULL DEFAULT 0, seen INTEGER NOT NULL DEFAULT 0,
+  data_json TEXT NOT NULL);
+  INSERT INTO checklist_entries (id, entry_date, data_json)
+  VALUES ('old1', '2026-07-01', '{}');""")
+oc.commit()
+oc.close()
+oc = db.init_db(old)
+cols = {r[1] for r in oc.execute("PRAGMA table_info(checklist_entries)")}
+ok({"voided_at", "void_reason"} <= cols, "kolumny dodane")
+try:
+    oc.execute("DELETE FROM checklist_entries WHERE id='old1'")
+    ok(False, "stara kopia też chroniona")
+except _sq.DatabaseError:
+    ok(True, "stara kopia też chroniona")
+oc.close()
+oc = db.init_db(old)          # drugi start — bez błędów
+ok(oc.execute("SELECT COUNT(*) FROM checklist_entries").fetchone()[0] == 1,
+   "drugi start na tej samej bazie bez problemów")
+oc.close()
 
 # ════════════════════════ сервер ════════════════════════
 section("serwer: dostęp")
@@ -672,6 +779,30 @@ app._cl_close_editor()
 ok(app.cl_edit is not None and page.dialogs, "ze zmianami — pyta o potwierdzenie")
 button(page.dialogs[-1], "Odrzuć").on_click(None)
 ok(app.cl_edit is None, "potwierdzenie odrzuca zmiany")
+
+section("aplikacja: anulowanie zamiast usuwania")
+cl.import_entry(c, entry("u1", "2026-08-20"))
+app.cl_month = ""
+target = [e for e in cl.list_entries(c) if e["id"] == "u1"][0]
+page.dialogs.clear()
+app.cl_void_entry(target)
+ok(page.dialogs and button(page.dialogs[-1], "Anuluj kopię"),
+   "okno anulowania z przyciskiem")
+app.cl_void_reason.value = "x"
+app.cl_void_do()
+ok(cl.get_entry(c, "u1")["voided_at"] is None, "za krótki powód — nic")
+ok(page.dialogs, "okno zostaje otwarte z błędem")
+app.cl_void_reason.value = "kucharz wybrał zły dzień"
+app.cl_void_do()
+ok(cl.get_entry(c, "u1")["voided_at"], "z powodem — anulowana")
+page.dialogs.clear()
+app.cl_preview_entry("u1")
+pv = page.dialogs[-1]
+ok(not getattr(button(pv, "Anuluj kopię"), "visible", True),
+   "w podglądzie anulowanej nie ma przycisku anulowania")
+ok(button(pv, "Usuń") is None, "w podglądzie nie ma „Usuń”")
+ok(any("ANULOWANA" in t for t in texts(pv)), "podgląd pokazuje ANULOWANA")
+page.dialogs.clear()
 
 sc.close()
 c.close()
