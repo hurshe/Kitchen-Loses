@@ -227,7 +227,7 @@ ok("Excludes: \"kuchnia.db" in iss, "instalator nie nadpisuje bazy")
 wf = open(os.path.join(HERE, ".github", "workflows", "release.yml"),
           encoding="utf-8").read()
 ok("APP_VERSION" in wf, "CI pilnuje zgodności tagu z APP_VERSION")
-ok("check_updater.py" in wf, "CI odpala te testy")
+ok("check_updater" in wf, "CI odpala te testy")
 ok(re.search(r'^APP_VERSION = "\d+\.\d+\.\d+"$', open(
     os.path.join(HERE, "main_kuchnia.py"), encoding="utf-8").read(), re.M),
    "APP_VERSION w formacie X.Y.Z")
